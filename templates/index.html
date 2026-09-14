@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ panel_name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="logo"><span class="logo-dot"></span><div><b>SKYRO</b><small>BOT CLOUD</small></div></div>
+    <nav>
+      <button class="nav active" data-page="dashboard">⌂ <span>Dashboard</span></button>
+      <button class="nav" data-page="console">▣ <span>Console</span></button>
+      <button class="nav" data-page="configs">⚙ <span>Configs</span></button>
+      <button class="nav" data-page="admin">◆ <span>Admin</span></button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="server-mini"><i></i><div><b>Runner online</b><small id="host-name">Windows</small></div></div>
+      <form method="post" action="/logout"><button class="logout">Sair</button></form>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">CONTROL CENTER</div>
+        <h1 id="page-title">Dashboard</h1>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" onclick="refreshAll()">↻ Atualizar</button>
+        <button class="primary" onclick="openCreate()">+ Novo bot</button>
+      </div>
+    </header>
+
+    <section id="page-dashboard" class="page active">
+      <div class="hero">
+        <div>
+          <span class="pill">● Sistema operacional</span>
+          <h2>Seus bots, em um só lugar.</h2>
+          <p>Crie projetos Python ou Node.js, edite os arquivos, instale dependências e controle os processos pela web.</p>
+        </div>
+        <div class="hero-grid">
+          <div><small>CPU</small><strong id="cpu">--%</strong></div>
+          <div><small>RAM</small><strong id="ram">--%</strong></div>
+          <div><small>DISCO</small><strong id="disk">--%</strong></div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span>Todos os bots</span><b id="total-bots">0</b></div>
+        <div class="stat"><span>Online</span><b id="online-bots">0</b></div>
+        <div class="stat"><span>Offline</span><b id="offline-bots">0</b></div>
+      </div>
+
+      <div class="section-head"><div><h3>Projetos</h3><p>Gerencie seus bots hospedados nesta VM.</p></div></div>
+      <div id="bot-grid" class="bot-grid"></div>
+    </section>
+
+    <section id="page-console" class="page">
+      <div class="console-layout">
+        <div class="panel-card">
+          <div class="card-head"><div><h3>Console</h3><p id="console-bot-label">Selecione um bot</p></div><select id="console-bot"></select></div>
+          <pre id="console-output" class="terminal">Selecione um bot para visualizar o console.</pre>
+          <div class="terminal-input"><span>$</span><input id="command" placeholder="pip install discord.py" onkeydown="if(event.key==='Enter') runCommand()"><button onclick="runCommand()">Executar</button></div>
+        </div>
+        <div class="panel-card side-info">
+          <h3>Ações rápidas</h3>
+          <button onclick="botAction('start')" class="wide">▶ Iniciar</button>
+          <button onclick="botAction('restart')" class="wide">↻ Reiniciar</button>
+          <button onclick="botAction('stop')" class="wide danger">■ Parar</button>
+          <div class="tips"><b>Exemplos</b><span>pip install discord.py</span><span>npm install</span><span>python --version</span><span>node --version</span><span>shutdown</span><span>restart</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-configs" class="page">
+      <div class="panel-card">
+        <div class="card-head"><div><h3>Configurações do bot</h3><p>Runtime, arquivo de entrada e variáveis.</p></div><select id="config-bot"></select></div>
+        <div class="form-grid">
+          <label>Arquivo de entrada<input id="entrypoint" placeholder="main.py ou index.js"></label>
+          <label>Python executável<input id="python-exec" placeholder="python ou caminho completo"></label>
+          <label>Node executável<input id="node-exec" placeholder="node ou caminho completo"></label>
+        </div>
+        <div class="env-head"><h3>Variáveis / Tokens</h3><button class="ghost" onclick="addEnv()">+ adicionar</button></div>
+        <div id="env-list"></div>
+        <button class="primary" onclick="saveConfig()">Salvar configurações</button>
+      </div>
+      <div class="panel-card">
+        <div class="card-head"><div><h3>Runtimes detectados</h3><p>Versões disponíveis na VM.</p></div><button class="ghost" onclick="loadRuntimes()">Detectar</button></div>
+        <div id="runtimes" class="runtime-list"></div>
+      </div>
+    </section>
+
+    <section id="page-admin" class="page">
+      <div id="admin-lock" class="admin-lock">
+        <div class="lock-icon">◆</div><h2>Área administrativa</h2><p>Digite a senha administrativa para visualizar os controles do servidor.</p>
+        <input id="admin-password" type="password" placeholder="Senha administrativa">
+        <button class="primary" onclick="unlockAdmin()">Desbloquear</button>
+      </div>
+      <div id="admin-content" class="hidden">
+        <div class="stats">
+          <div class="stat"><span>Bots cadastrados</span><b id="admin-total">0</b></div>
+          <div class="stat"><span>Bots online</span><b id="admin-online">0</b></div>
+          <div class="stat"><span>Host</span><b id="admin-host">--</b></div>
+        </div>
+        <div class="panel-card">
+          <div class="card-head"><div><h3>Webhooks / Logs</h3><p>Eventos de criação, inicialização, configuração e administração.</p></div></div>
+          <div id="logs" class="logs"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="card-head"><div><h2>Criar novo bot</h2><p>Comece com um projeto vazio ou envie um ZIP.</p></div><button class="x" onclick="closeModal()">×</button></div>
+    <form id="create-form">
+      <label>Nome do bot<input name="name" required placeholder="Meu Discord Bot"></label>
+      <label>Runtime<select name="runtime"><option value="python">Python</option><option value="node">Node.js</option></select></label>
+      <label>Arquivo de entrada<input name="entrypoint" placeholder="main.py / index.js"></label>
+      <label>Projeto ZIP <input type="file" name="zip" accept=".zip"></label>
+      <div class="drop-note">Dica: seu ZIP pode conter main.py, index.js, package.json, requirements.txt etc.</div>
+      <button class="primary full">Criar bot</button>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

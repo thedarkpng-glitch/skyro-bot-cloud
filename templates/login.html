@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login • Skyro Bot Cloud</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<div class="login-card">
+  <div class="brand-mark">S</div>
+  <h1>Skyro Bot Cloud</h1>
+  <p>Acesso ao painel de hospedagem</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post">
+    <input type="password" name="password" placeholder="Senha do painel" autofocus required>
+    <button class="primary full">Entrar</button>
+  </form>
+</div>
+</body>
+</html>
