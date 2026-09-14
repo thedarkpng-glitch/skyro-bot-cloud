@@ -10,29 +10,51 @@ jobs:
 
     env:
       RDP_USER: RDPUser
-      RDP_PASSWORD: Skyro
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
 
+      # ============================================================
+      # CONFIGURAR RDP
+      # ============================================================
       - name: Configurar RDP
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "================================"
           Write-Host "Configurando RDP..."
+          Write-Host "================================"
 
-          # Criar politica de senha sem complexidade
+          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
+              throw "O Secret RDP_PASSWORD nao foi configurado."
+          }
+
+          # --------------------------------------------------------
+          # Configurar politica de senha
+          # --------------------------------------------------------
+          Write-Host "Configurando politica de senha..."
+
           $policy = "$env:TEMP\skyro-policy.inf"
 
           secedit /export /cfg "$policy" /quiet
 
           if (Test-Path $policy) {
-              $content = Get-Content $policy -Raw
 
-              $content = $content -replace 'PasswordComplexity\s*=\s*\d+', 'PasswordComplexity = 0'
-              $content = $content -replace 'MinimumPasswordLength\s*=\s*\d+', 'MinimumPasswordLength = 5'
+              $content = Get-Content "$policy" -Raw
 
-              Set-Content $policy $content -Encoding Unicode
+              $content = $content -replace `
+                'PasswordComplexity\s*=\s*\d+', `
+                'PasswordComplexity = 0'
+
+              $content = $content -replace `
+                'MinimumPasswordLength\s*=\s*\d+', `
+                'MinimumPasswordLength = 5'
+
+              Set-Content `
+                "$policy" `
+                $content `
+                -Encoding Unicode
 
               secedit /configure `
                 /db "$env:TEMP\skyro.sdb" `
@@ -41,38 +63,52 @@ jobs:
                 /quiet
           }
 
-          net accounts /minpwlen:5 | Out-Null
+          # Garantir tamanho minimo
+          net accounts /minpwlen:5 /minpwage:0 /maxpwage:unlimited
 
           Start-Sleep -Seconds 2
 
-          # Criar/atualizar usuário
-          $user = Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue
+          # --------------------------------------------------------
+          # Criar / atualizar usuario
+          # --------------------------------------------------------
+          Write-Host "Criando usuario RDP..."
+
+          $password = ConvertTo-SecureString `
+            $env:RDP_PASSWORD `
+            -AsPlainText `
+            -Force
+
+          $user = Get-LocalUser `
+            -Name $env:RDP_USER `
+            -ErrorAction SilentlyContinue
 
           if ($null -eq $user) {
-              $password = ConvertTo-SecureString `
-                $env:RDP_PASSWORD `
-                -AsPlainText `
-                -Force
 
               New-LocalUser `
                 -Name $env:RDP_USER `
                 -Password $password `
                 -FullName "Skyro RDP" `
                 -Description "Skyro RDP User" `
-                -PasswordNeverExpires
+                -PasswordNeverExpires `
+                -AccountNeverExpires
+
+              Write-Host "Usuario criado com sucesso."
+
           }
           else {
-              $password = ConvertTo-SecureString `
-                $env:RDP_PASSWORD `
-                -AsPlainText `
-                -Force
 
               Set-LocalUser `
                 -Name $env:RDP_USER `
                 -Password $password
+
+              Write-Host "Senha do usuario atualizada."
           }
 
+          # --------------------------------------------------------
           # Grupos
+          # --------------------------------------------------------
+          Write-Host "Configurando grupos..."
+
           Add-LocalGroupMember `
             -Group "Administrators" `
             -Member $env:RDP_USER `
@@ -83,7 +119,11 @@ jobs:
             -Member $env:RDP_USER `
             -ErrorAction SilentlyContinue
 
+          # --------------------------------------------------------
           # Ativar RDP
+          # --------------------------------------------------------
+          Write-Host "Ativando RDP..."
+
           Set-ItemProperty `
             -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
             -Name "fDenyTSConnections" `
@@ -94,11 +134,19 @@ jobs:
             -Name "UserAuthentication" `
             -Value 0
 
+          # --------------------------------------------------------
           # Firewall
+          # --------------------------------------------------------
+          Write-Host "Configurando firewall..."
+
           Enable-NetFirewallRule `
             -DisplayGroup "Remote Desktop"
 
-          # Serviço RDP
+          # --------------------------------------------------------
+          # Servico RDP
+          # --------------------------------------------------------
+          Write-Host "Iniciando TermService..."
+
           Set-Service `
             -Name "TermService" `
             -StartupType Automatic
@@ -117,6 +165,9 @@ jobs:
           Write-Host ""
 
 
+      # ============================================================
+      # TAILSCALE
+      # ============================================================
       - name: Conectar Tailscale
         uses: tailscale/github-action@v4
         with:
@@ -124,6 +175,9 @@ jobs:
           version: latest
 
 
+      # ============================================================
+      # OBTER IP
+      # ============================================================
       - name: Obter IP do Tailscale
         shell: powershell
         run: |
@@ -134,6 +188,7 @@ jobs:
           $ip = $null
 
           for ($i = 1; $i -le 15; $i++) {
+
               $ip = (tailscale ip -4 | Select-Object -First 1).Trim()
 
               if (-not [string]::IsNullOrWhiteSpace($ip)) {
@@ -164,9 +219,14 @@ jobs:
           Write-Host ""
 
 
+      # ============================================================
+      # TESTAR RDP
+      # ============================================================
       - name: Testar RDP
         shell: powershell
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "Testando servico RDP..."
 
           $service = Get-Service `
@@ -174,6 +234,7 @@ jobs:
             -ErrorAction Stop
 
           if ($service.Status -ne "Running") {
+
               Start-Service `
                 -Name "TermService"
 
@@ -197,11 +258,15 @@ jobs:
           Write-Host "Porta 3389: OK"
 
 
+      # ============================================================
+      # DISCORD WEBHOOK
+      # ============================================================
       - name: Enviar acesso para Discord
         shell: powershell
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
+
           if ([string]::IsNullOrWhiteSpace($env:DISCORD_WEBHOOK_URL)) {
               Write-Host "DISCORD_WEBHOOK_URL nao configurado."
               exit 0
@@ -210,16 +275,16 @@ jobs:
           $payload = @{
               username = "Skyro RDP"
               content = @"
-            **SKYRO RDP ONLINE**
+          **SKYRO RDP ONLINE**
 
-            IP Tailscale: ``$env:TAILSCALE_IP``
-            Porta: ``3389``
-            Usuario: ``RDPUser``
-            Senha: ``Skyro``
+          IP Tailscale: ``$env:TAILSCALE_IP``
+          Porta: ``3389``
+          Usuario: ``$env:RDP_USER``
+          Senha: ``$env:RDP_PASSWORD``
 
-            Conecte pelo:
-            ``mstsc``
-            "@
+          Conecte pelo:
+          ``mstsc``
+          "@
           } | ConvertTo-Json
 
           Invoke-RestMethod `
@@ -231,9 +296,13 @@ jobs:
           Write-Host "Webhook enviado."
 
 
+      # ============================================================
+      # MOSTRAR ACESSO
+      # ============================================================
       - name: Mostrar acesso
         shell: powershell
         run: |
+
           Write-Host ""
           Write-Host "================================================"
           Write-Host "              SKYRO RDP ONLINE"
@@ -246,18 +315,22 @@ jobs:
           Write-Host "3389"
           Write-Host ""
           Write-Host "USUARIO:"
-          Write-Host "RDPUser"
+          Write-Host "$env:RDP_USER"
           Write-Host ""
           Write-Host "SENHA:"
-          Write-Host "Skyro"
+          Write-Host "$env:RDP_PASSWORD"
           Write-Host ""
           Write-Host "================================================"
           Write-Host ""
 
 
+      # ============================================================
+      # MANTER VM ONLINE
+      # ============================================================
       - name: Manter VM online
         shell: powershell
         run: |
+
           Write-Host "VM online."
 
           while ($true) {
@@ -267,10 +340,14 @@ jobs:
                 -ErrorAction SilentlyContinue
 
               if ($null -eq $rdp) {
+
                   Write-Host "TermService nao encontrado."
+
               }
               elseif ($rdp.Status -ne "Running") {
+
                   Write-Host "RDP parado. Reiniciando..."
+
                   Start-Service `
                     -Name "TermService" `
                     -ErrorAction SilentlyContinue
