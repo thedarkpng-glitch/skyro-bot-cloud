@@ -1,127 +1,158 @@
-name: Windows RDP via Tailscale
+name: Skyro Bot Cloud
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  rdp:
-    name: RDP Windows
+  cloud:
+    name: Skyro Bot Cloud
     runs-on: windows-2025
     timeout-minutes: 360
 
+    env:
+      RDP_USER: RDPUser
+      RDP_PASSWORD: Skyro
+
+      ADMIN_EMAIL: thedark.png@gmail.com
+      ADMIN_PASSWORD: Skyro@2026!Admin
+
+      PANEL_PORT: "5000"
+
     steps:
 
-      # ============================================================
-      # 1. CONFIGURAÇÃO DO WINDOWS
-      # ============================================================
+      # ==========================================================
+      # 01 - INFORMACOES
+      # ==========================================================
 
-      - name: "01 - Configurar Windows"
+      - name: "01 - Informacoes da VM"
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host "              WINDOWS RDP - CONFIGURACAO"
+          Write-Host "                  SKYRO BOT CLOUD"
           Write-Host "============================================================"
           Write-Host ""
 
-          $Username = "RDPUser"
-          $PasswordText = "Rdp@2026!Windows"
-
-          Write-Host "[1/6] Verificando usuario..."
-
-          $User = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-
-          if ($User) {
-              Write-Host "[INFO] Usuario existente encontrado."
-              Write-Host "[INFO] Removendo usuario antigo..."
-
-              Remove-LocalUser -Name $Username
-
-              Write-Host "[OK] Usuario antigo removido."
-          }
-          else {
-              Write-Host "[INFO] Usuario ainda nao existe."
-          }
+          Write-Host "Sistema : Windows"
+          Write-Host "Runner  : windows-2025"
 
           Write-Host ""
-          Write-Host "[2/6] Criando senha segura..."
+          Write-Host "Python:"
+          python --version
+
+          Write-Host ""
+          Write-Host "Node:"
+          node --version
+
+          Write-Host ""
+          Write-Host "NPM:"
+          npm --version
+
+          Write-Host ""
+          Write-Host "============================================================"
+
+      # ==========================================================
+      # 02 - RDP
+      # ==========================================================
+
+      - name: "02 - Configurar RDP"
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $Username = $env:RDP_USER
+          $PasswordText = $env:RDP_PASSWORD
+
+          Write-Host ""
+          Write-Host "============================================================"
+          Write-Host "                    CONFIGURANDO RDP"
+          Write-Host "============================================================"
+
+          # ------------------------------------------------------
+          # Ajusta politica local para aceitar a senha "Skyro"
+          # ------------------------------------------------------
+
+          $SeceditDir = "$env:TEMP\skyro-security"
+          $SeceditInf = "$SeceditDir\security.inf"
+
+          New-Item -ItemType Directory -Path $SeceditDir -Force | Out-Null
+
+          secedit /export /cfg $SeceditInf /quiet
+
+          if (!(Test-Path $SeceditInf)) {
+              throw "Nao foi possivel exportar a politica de seguranca."
+          }
+
+          $SecurityText = Get-Content $SeceditInf -Raw
+
+          $SecurityText = $SecurityText -replace 'PasswordComplexity\s*=\s*\d+', 'PasswordComplexity = 0'
+          $SecurityText = $SecurityText -replace 'MinimumPasswordLength\s*=\s*\d+', 'MinimumPasswordLength = 5'
+
+          Set-Content -Path $SeceditInf -Value $SecurityText -Encoding Unicode
+
+          secedit /configure /db "$SeceditDir\skyro.sdb" /cfg $SeceditInf /areas SECURITYPOLICY /quiet
+
+          Start-Sleep -Seconds 2
+
+          # ------------------------------------------------------
+          # Remove usuario antigo
+          # ------------------------------------------------------
+
+          $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+
+          if ($ExistingUser) {
+              Write-Host "[INFO] Usuario antigo encontrado."
+              Remove-LocalUser -Name $Username
+              Start-Sleep -Seconds 1
+          }
+
+          # ------------------------------------------------------
+          # Cria usuario
+          # ------------------------------------------------------
 
           $SecurePassword = ConvertTo-SecureString `
               $PasswordText `
               -AsPlainText `
               -Force
 
-          Write-Host "[OK] Senha preparada."
-
-          Write-Host ""
-          Write-Host "[3/6] Criando usuario..."
-
           New-LocalUser `
               -Name $Username `
               -Password $SecurePassword `
-              -FullName "RDP User" `
-              -Description "Usuario para acesso remoto RDP" `
+              -FullName "Skyro RDP User" `
+              -Description "Skyro Bot Cloud RDP" `
               -PasswordNeverExpires `
               -AccountNeverExpires
 
-          Write-Host "[OK] Usuario criado."
-
-          Write-Host ""
-          Write-Host "[4/6] Adicionando usuario aos Administrators..."
-
-          $AdminGroup = Get-LocalGroup -SID "S-1-5-32-544"
+          # ------------------------------------------------------
+          # Administrador
+          # ------------------------------------------------------
 
           Add-LocalGroupMember `
-              -SID $AdminGroup.SID `
+              -Group "Administrators" `
               -Member $Username
 
-          Write-Host "[OK] Usuario adicionado aos administradores."
-
-          Write-Host ""
-          Write-Host "[5/6] Ativando conexoes RDP..."
+          # ------------------------------------------------------
+          # Habilita RDP
+          # ------------------------------------------------------
 
           Set-ItemProperty `
               -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
               -Name "fDenyTSConnections" `
               -Value 0
 
-          Write-Host "[OK] RDP ativado."
-
-          Write-Host ""
-          Write-Host "[6/6] Configurando Firewall..."
+          Set-ItemProperty `
+              -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+              -Name "UserAuthentication" `
+              -Value 1
 
           Enable-NetFirewallRule `
               -DisplayGroup "Remote Desktop" `
               -ErrorAction SilentlyContinue
-
-          Write-Host "[OK] Firewall configurado."
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "              WINDOWS CONFIGURADO"
-          Write-Host "============================================================"
-          Write-Host " Usuario : $Username"
-          Write-Host " Senha   : $PasswordText"
-          Write-Host "============================================================"
-          Write-Host ""
-
-      # ============================================================
-      # 2. SERVICO RDP
-      # ============================================================
-
-      - name: "02 - Iniciar servico RDP"
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "                 SERVICO RDP"
-          Write-Host "============================================================"
-
-          Write-Host "[INFO] Configurando TermService..."
 
           Set-Service `
               -Name "TermService" `
@@ -131,205 +162,1789 @@ jobs:
               -Name "TermService" `
               -ErrorAction SilentlyContinue
 
-          Start-Sleep -Seconds 3
-
-          $Service = Get-Service -Name "TermService"
-
-          if ($Service.Status -ne "Running") {
-              throw "O servico TermService nao iniciou."
-          }
-
-          Write-Host "[OK] TermService esta em execucao."
-
+          Write-Host ""
+          Write-Host "[OK] RDP configurado."
+          Write-Host ""
+          Write-Host "USUARIO RDP : $Username"
+          Write-Host "SENHA RDP   : $PasswordText"
           Write-Host ""
           Write-Host "============================================================"
 
-      # ============================================================
-      # 3. BAIXAR TAILSCALE
-      # ============================================================
+      # ==========================================================
+      # 03 - PYTHON
+      # ==========================================================
 
-      - name: "03 - Instalar Tailscale"
+      - name: "03 - Preparar Python"
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "                 TAILSCALE"
-          Write-Host "============================================================"
+          python --version
 
-          $Installer = "$env:TEMP\tailscale-setup.exe"
+          python -m pip install --upgrade pip
 
-          Write-Host "[INFO] Baixando Tailscale..."
+          python -m pip install flask
 
-          Invoke-WebRequest `
-              -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" `
-              -OutFile $Installer
+          Write-Host "[OK] Python preparado."
 
-          if (!(Test-Path $Installer)) {
-              throw "O instalador do Tailscale nao foi baixado."
-          }
+      # ==========================================================
+      # 04 - CRIAR PASTAS
+      # ==========================================================
 
-          Write-Host "[OK] Download concluido."
+      - name: "04 - Criar estrutura Skyro"
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
 
-          Write-Host "[INFO] Instalando Tailscale..."
+          $Root = Join-Path $env:GITHUB_WORKSPACE "skyro"
 
-          $Process = Start-Process `
-              -FilePath $Installer `
-              -ArgumentList "/quiet" `
-              -Wait `
-              -PassThru
+          New-Item -ItemType Directory -Path $Root -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Root\projects" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Root\uploads" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Root\logs" -Force | Out-Null
 
-          if ($Process.ExitCode -ne 0) {
-              throw "Instalacao do Tailscale falhou. Codigo: $($Process.ExitCode)"
-          }
+          Write-Host "[OK] Estrutura criada."
 
-          Write-Host "[OK] Tailscale instalado."
+      # ==========================================================
+      # 05 - CRIAR PAINEL
+      # ==========================================================
 
-          Write-Host ""
-          Write-Host "============================================================"
-
-      # ============================================================
-      # 4. CONECTAR TAILSCALE
-      # ============================================================
-
-      - name: "04 - Conectar Tailscale"
+      - name: "05 - Criar painel Skyro"
         shell: powershell
         env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          SKYRO_ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          SKYRO_ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
+          SKYRO_PORT: ${{ env.PANEL_PORT }}
+          SKYRO_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "              CONEXAO TAILSCALE"
-          Write-Host "============================================================"
+          $App = Join-Path $env:GITHUB_WORKSPACE "skyro\app.py"
 
-          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
-              throw "O Secret TAILSCALE_AUTH_KEY nao foi configurado."
+          @'
+          import os
+          import sys
+          import json
+          import time
+          import shutil
+          import socket
+          import platform
+          import subprocess
+          import urllib.request
+
+          from pathlib import Path
+          from flask import (
+              Flask,
+              request,
+              redirect,
+              session,
+              render_template_string,
+              send_from_directory,
+              jsonify
+          )
+          from werkzeug.utils import secure_filename
+
+
+          # ======================================================
+          # CONFIG
+          # ======================================================
+
+          app = Flask(__name__)
+
+          app.secret_key = os.environ.get(
+              "SKYRO_SESSION_KEY",
+              "SkyroCloud-Session-2026"
+          )
+
+          ADMIN_EMAIL = os.environ.get(
+              "SKYRO_ADMIN_EMAIL",
+              "thedark.png@gmail.com"
+          )
+
+          ADMIN_PASSWORD = os.environ.get(
+              "SKYRO_ADMIN_PASSWORD",
+              "Skyro@2026!Admin"
+          )
+
+          PORT = int(
+              os.environ.get(
+                  "SKYRO_PORT",
+                  "5000"
+              )
+          )
+
+          WEBHOOK = os.environ.get(
+              "SKYRO_WEBHOOK",
+              ""
+          )
+
+          BASE_DIR = Path(__file__).resolve().parent
+          PROJECTS_DIR = BASE_DIR / "projects"
+          UPLOADS_DIR = BASE_DIR / "uploads"
+          LOGS_DIR = BASE_DIR / "logs"
+
+          PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+          UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+          LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+          # ======================================================
+          # PROCESSOS
+          # ======================================================
+
+          processes = {}
+
+
+          # ======================================================
+          # WEBHOOK
+          # ======================================================
+
+          def send_webhook(title, description, fields=None):
+
+              if not WEBHOOK:
+                  return
+
+              payload = {
+                  "username": "Skyro Bot Cloud",
+                  "embeds": [
+                      {
+                          "title": title,
+                          "description": description,
+                          "fields": fields or [],
+                          "footer": {
+                              "text": "Skyro Bot Cloud"
+                          }
+                      }
+                  ]
+              }
+
+              try:
+
+                  req = urllib.request.Request(
+                      WEBHOOK,
+                      data=json.dumps(payload).encode("utf-8"),
+                      headers={
+                          "Content-Type": "application/json"
+                      },
+                      method="POST"
+                  )
+
+                  urllib.request.urlopen(
+                      req,
+                      timeout=10
+                  )
+
+              except Exception as exc:
+
+                  print(
+                      "[WEBHOOK] Erro:",
+                      exc
+                  )
+
+
+          # ======================================================
+          # LOGIN
+          # ======================================================
+
+          LOGIN_HTML = """
+          <!doctype html>
+
+          <html>
+
+          <head>
+
+          <meta charset="utf-8">
+
+          <meta
+              name="viewport"
+              content="width=device-width,initial-scale=1"
+          >
+
+          <title>Skyro Cloud</title>
+
+          <style>
+
+          * {
+              box-sizing: border-box;
           }
 
-          $Tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          body {
+              margin: 0;
+              min-height: 100vh;
 
-          if (!(Test-Path $Tailscale)) {
-              $Tailscale = "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe"
+              display: flex;
+              align-items: center;
+              justify-content: center;
+
+              background:
+                  radial-gradient(
+                      circle at top,
+                      #181820 0,
+                      #08080c 45%,
+                      #050507 100%
+                  );
+
+              color: white;
+
+              font-family:
+                  Arial,
+                  Helvetica,
+                  sans-serif;
           }
 
-          if (!(Test-Path $Tailscale)) {
-              throw "tailscale.exe nao foi encontrado."
+          .login {
+              width: 400px;
+              max-width: calc(100% - 30px);
+
+              background: rgba(18,18,25,.96);
+
+              border: 1px solid #292934;
+
+              border-radius: 20px;
+
+              padding: 35px;
+
+              box-shadow:
+                  0 30px 100px rgba(0,0,0,.65);
           }
 
-          Write-Host "[OK] Executavel encontrado:"
-          Write-Host "     $Tailscale"
+          .logo {
+              width: 55px;
+              height: 55px;
 
-          Write-Host ""
-          Write-Host "[INFO] Conectando a rede Tailscale..."
+              display: flex;
+              align-items: center;
+              justify-content: center;
 
-          & $Tailscale up `
-              --authkey="$env:TAILSCALE_AUTH_KEY" `
-              --hostname="github-rdp" `
-              --accept-dns=true
+              border-radius: 15px;
 
-          if ($LASTEXITCODE -ne 0) {
-              throw "Nao foi possivel conectar ao Tailscale."
+              background: #ff4500;
+
+              font-size: 24px;
+              font-weight: bold;
+
+              margin-bottom: 20px;
           }
 
-          Write-Host "[OK] Tailscale conectado."
+          h1 {
+              margin: 0;
+              font-size: 29px;
+          }
 
-          Write-Host ""
-          Write-Host "============================================================"
+          .subtitle {
+              color: #888;
+              margin-top: 8px;
+              margin-bottom: 25px;
+          }
 
-      # ============================================================
-      # 5. MOSTRAR IP E CREDENCIAIS
-      # ============================================================
+          input {
+              width: 100%;
 
-      - name: "05 - Mostrar dados de acesso"
+              padding: 14px;
+
+              margin-top: 10px;
+
+              border-radius: 11px;
+
+              border: 1px solid #30303b;
+
+              background: #09090d;
+
+              color: white;
+
+              outline: none;
+          }
+
+          input:focus {
+              border-color: #ff4500;
+          }
+
+          button {
+              width: 100%;
+
+              padding: 14px;
+
+              margin-top: 18px;
+
+              border: 0;
+
+              border-radius: 11px;
+
+              background: #ff4500;
+
+              color: white;
+
+              font-weight: bold;
+
+              cursor: pointer;
+          }
+
+          button:hover {
+              filter: brightness(1.08);
+          }
+
+          .error {
+              margin-top: 15px;
+
+              padding: 11px;
+
+              border-radius: 10px;
+
+              background: #381010;
+
+              border: 1px solid #702020;
+
+              color: #ff8e8e;
+          }
+
+          </style>
+
+          </head>
+
+          <body>
+
+          <div class="login">
+
+              <div class="logo">S</div>
+
+              <h1>Skyro Cloud</h1>
+
+              <div class="subtitle">
+                  Painel de hospedagem
+              </div>
+
+              <form method="post">
+
+                  <input
+                      type="email"
+                      name="email"
+                      placeholder="Email"
+                      required
+                  >
+
+                  <input
+                      type="password"
+                      name="password"
+                      placeholder="Senha"
+                      required
+                  >
+
+                  <button type="submit">
+                      Entrar
+                  </button>
+
+              </form>
+
+              {% if error %}
+
+              <div class="error">
+                  {{ error }}
+              </div>
+
+              {% endif %}
+
+          </div>
+
+          </body>
+
+          </html>
+          """
+
+
+          # ======================================================
+          # DASHBOARD
+          # ======================================================
+
+          DASHBOARD_HTML = """
+          <!doctype html>
+
+          <html>
+
+          <head>
+
+          <meta charset="utf-8">
+
+          <meta
+              name="viewport"
+              content="width=device-width,initial-scale=1"
+          >
+
+          <title>Skyro Cloud</title>
+
+          <style>
+
+          * {
+              box-sizing: border-box;
+          }
+
+          body {
+              margin: 0;
+
+              background: #08080c;
+
+              color: white;
+
+              font-family:
+                  Arial,
+                  Helvetica,
+                  sans-serif;
+          }
+
+          nav {
+              height: 72px;
+
+              display: flex;
+
+              align-items: center;
+
+              justify-content: space-between;
+
+              padding: 0 30px;
+
+              background: #0e0e14;
+
+              border-bottom: 1px solid #25252f;
+
+              position: sticky;
+
+              top: 0;
+
+              z-index: 5;
+          }
+
+          .brand {
+              font-size: 22px;
+              font-weight: bold;
+          }
+
+          .brand span {
+              color: #ff4500;
+          }
+
+          .logout {
+              color: #aaa;
+              text-decoration: none;
+          }
+
+          main {
+              max-width: 1250px;
+
+              margin: auto;
+
+              padding: 35px;
+          }
+
+          .hero {
+              margin-bottom: 25px;
+          }
+
+          .hero h1 {
+              margin: 0;
+              font-size: 32px;
+          }
+
+          .hero p {
+              color: #888;
+          }
+
+          .cards {
+              display: grid;
+
+              grid-template-columns:
+                  repeat(
+                      auto-fit,
+                      minmax(190px, 1fr)
+                  );
+
+              gap: 16px;
+
+              margin-bottom: 30px;
+          }
+
+          .card {
+              background: #111118;
+
+              border: 1px solid #242430;
+
+              border-radius: 16px;
+
+              padding: 21px;
+          }
+
+          .label {
+              color: #777;
+
+              font-size: 13px;
+          }
+
+          .value {
+              margin-top: 8px;
+
+              font-size: 21px;
+
+              font-weight: bold;
+
+              overflow-wrap: anywhere;
+          }
+
+          .online {
+              color: #35d07f;
+          }
+
+          .panel {
+              background: #111118;
+
+              border: 1px solid #242430;
+
+              border-radius: 16px;
+
+              padding: 23px;
+
+              margin-bottom: 20px;
+          }
+
+          .panel h2 {
+              margin-top: 0;
+          }
+
+          .upload {
+              border: 1px dashed #41414e;
+
+              border-radius: 13px;
+
+              padding: 25px;
+
+              text-align: center;
+
+              background: #0b0b10;
+          }
+
+          input[type=file] {
+              width: 100%;
+
+              color: #aaa;
+
+              margin-bottom: 15px;
+          }
+
+          button,
+          .button {
+              display: inline-block;
+
+              padding: 11px 16px;
+
+              border: 0;
+
+              border-radius: 9px;
+
+              background: #ff4500;
+
+              color: white;
+
+              font-weight: bold;
+
+              cursor: pointer;
+
+              text-decoration: none;
+          }
+
+          .files {
+              width: 100%;
+
+              border-collapse: collapse;
+          }
+
+          .files th,
+          .files td {
+              padding: 13px;
+
+              text-align: left;
+
+              border-bottom: 1px solid #25252f;
+          }
+
+          .files th {
+              color: #777;
+
+              font-size: 13px;
+          }
+
+          .actions {
+              display: flex;
+
+              gap: 8px;
+
+              flex-wrap: wrap;
+          }
+
+          .danger {
+              background: #8f1e1e;
+          }
+
+          .success {
+              color: #35d07f;
+          }
+
+          .muted {
+              color: #777;
+          }
+
+          .message {
+              padding: 12px;
+
+              background: #171720;
+
+              border: 1px solid #2c2c38;
+
+              border-radius: 10px;
+
+              margin-bottom: 15px;
+          }
+
+          @media(max-width:650px) {
+
+              main {
+                  padding: 20px;
+              }
+
+              nav {
+                  padding: 0 18px;
+              }
+
+              .files th:nth-child(2),
+              .files td:nth-child(2) {
+                  display: none;
+              }
+
+          }
+
+          </style>
+
+          </head>
+
+          <body>
+
+          <nav>
+
+              <div class="brand">
+                  <span>Skyro</span> Bot Cloud
+              </div>
+
+              <a
+                  class="logout"
+                  href="/logout"
+              >
+                  Sair
+              </a>
+
+          </nav>
+
+          <main>
+
+              <div class="hero">
+
+                  <h1>
+                      Dashboard
+                  </h1>
+
+                  <p>
+                      Gerencie seus projetos e arquivos.
+                  </p>
+
+              </div>
+
+              {% if message %}
+
+              <div class="message">
+                  {{ message }}
+              </div>
+
+              {% endif %}
+
+              <div class="cards">
+
+                  <div class="card">
+
+                      <div class="label">
+                          Status
+                      </div>
+
+                      <div class="value online">
+                          ONLINE
+                      </div>
+
+                  </div>
+
+                  <div class="card">
+
+                      <div class="label">
+                          Sistema
+                      </div>
+
+                      <div class="value">
+                          {{ system }}
+                      </div>
+
+                  </div>
+
+                  <div class="card">
+
+                      <div class="label">
+                          Python
+                      </div>
+
+                      <div class="value">
+                          {{ python }}
+                      </div>
+
+                  </div>
+
+                  <div class="card">
+
+                      <div class="label">
+                          Node
+                      </div>
+
+                      <div class="value">
+                          {{ node }}
+                      </div>
+
+                  </div>
+
+                  <div class="card">
+
+                      <div class="label">
+                          Hostname
+                      </div>
+
+                      <div class="value">
+                          {{ hostname }}
+                      </div>
+
+                  </div>
+
+              </div>
+
+
+              <div class="panel">
+
+                  <h2>
+                      Upload de arquivos
+                  </h2>
+
+                  <p class="muted">
+                      Envie .py, .js, .zip, .json, .txt e outros arquivos.
+                  </p>
+
+                  <form
+                      class="upload"
+                      action="/upload"
+                      method="post"
+                      enctype="multipart/form-data"
+                  >
+
+                      <input
+                          type="file"
+                          name="file"
+                          required
+                      >
+
+                      <button type="submit">
+                          Enviar arquivo
+                      </button>
+
+                  </form>
+
+              </div>
+
+
+              <div class="panel">
+
+                  <h2>
+                      Arquivos
+                  </h2>
+
+                  <table class="files">
+
+                      <thead>
+
+                      <tr>
+                          <th>Arquivo</th>
+                          <th>Tamanho</th>
+                          <th>Ações</th>
+                      </tr>
+
+                      </thead>
+
+                      <tbody>
+
+                      {% for file in files %}
+
+                      <tr>
+
+                          <td>
+                              {{ file.name }}
+                          </td>
+
+                          <td class="muted">
+                              {{ file.size }}
+                          </td>
+
+                          <td>
+
+                              <div class="actions">
+
+                                  <a
+                                      class="button"
+                                      href="/download/{{ file.name }}"
+                                  >
+                                      Baixar
+                                  </a>
+
+                                  {% if file.running %}
+
+                                  <a
+                                      class="button danger"
+                                      href="/stop/{{ file.name }}"
+                                  >
+                                      Parar
+                                  </a>
+
+                                  {% elif file.ext in ['.py','.js'] %}
+
+                                  <a
+                                      class="button"
+                                      href="/run/{{ file.name }}"
+                                  >
+                                      Executar
+                                  </a>
+
+                                  {% endif %}
+
+                                  <a
+                                      class="button danger"
+                                      href="/delete/{{ file.name }}"
+                                      onclick="return confirm('Excluir este arquivo?')"
+                                  >
+                                      Excluir
+                                  </a>
+
+                              </div>
+
+                          </td>
+
+                      </tr>
+
+                      {% else %}
+
+                      <tr>
+
+                          <td
+                              colspan="3"
+                              class="muted"
+                          >
+                              Nenhum arquivo enviado.
+                          </td>
+
+                      </tr>
+
+                      {% endfor %}
+
+                      </tbody>
+
+                  </table>
+
+              </div>
+
+          </main>
+
+          </body>
+
+          </html>
+          """
+
+
+          # ======================================================
+          # AUTH
+          # ======================================================
+
+          def logged():
+
+              return bool(
+                  session.get("logged_in")
+              )
+
+
+          # ======================================================
+          # LOGIN
+          # ======================================================
+
+          @app.route(
+              "/",
+              methods=["GET", "POST"]
+          )
+          def login():
+
+              if logged():
+                  return redirect("/dashboard")
+
+              error = None
+
+              if request.method == "POST":
+
+                  email = request.form.get(
+                      "email",
+                      ""
+                  ).strip()
+
+                  password = request.form.get(
+                      "password",
+                      ""
+                  )
+
+                  if (
+                      email == ADMIN_EMAIL
+                      and password == ADMIN_PASSWORD
+                  ):
+
+                      session["logged_in"] = True
+
+                      send_webhook(
+                          "Login no painel",
+                          "Administrador entrou no Skyro Cloud.",
+                          [
+                              {
+                                  "name": "Email",
+                                  "value": email,
+                                  "inline": True
+                              }
+                          ]
+                      )
+
+                      return redirect("/dashboard")
+
+                  error = "Email ou senha incorretos."
+
+              return render_template_string(
+                  LOGIN_HTML,
+                  error=error
+              )
+
+
+          # ======================================================
+          # DASHBOARD
+          # ======================================================
+
+          @app.route("/dashboard")
+          def dashboard():
+
+              if not logged():
+                  return redirect("/")
+
+              file_list = []
+
+              for path in sorted(
+                  UPLOADS_DIR.iterdir(),
+                  key=lambda x: x.name.lower()
+              ):
+
+                  if not path.is_file():
+                      continue
+
+                  size = path.stat().st_size
+
+                  if size < 1024:
+                      size_text = f"{size} B"
+
+                  elif size < 1024 * 1024:
+                      size_text = f"{size / 1024:.1f} KB"
+
+                  else:
+                      size_text = f"{size / 1024 / 1024:.1f} MB"
+
+                  file_list.append(
+                      {
+                          "name": path.name,
+                          "size": size_text,
+                          "ext": path.suffix.lower(),
+                          "running": path.name in processes
+                          and processes[path.name].poll() is None
+                      }
+                  )
+
+              return render_template_string(
+                  DASHBOARD_HTML,
+                  files=file_list,
+                  system=platform.system(),
+                  python=platform.python_version(),
+                  node=get_node_version(),
+                  hostname=socket.gethostname(),
+                  message=request.args.get("message")
+              )
+
+
+          # ======================================================
+          # NODE VERSION
+          # ======================================================
+
+          def get_node_version():
+
+              try:
+
+                  result = subprocess.run(
+                      ["node", "--version"],
+                      capture_output=True,
+                      text=True,
+                      timeout=5
+                  )
+
+                  return result.stdout.strip() or "N/A"
+
+              except Exception:
+
+                  return "Nao instalado"
+
+
+          # ======================================================
+          # UPLOAD
+          # ======================================================
+
+          @app.route(
+              "/upload",
+              methods=["POST"]
+          )
+          def upload():
+
+              if not logged():
+                  return redirect("/")
+
+              uploaded = request.files.get(
+                  "file"
+              )
+
+              if not uploaded:
+                  return redirect(
+                      "/dashboard?message=Nenhum arquivo selecionado."
+                  )
+
+              filename = secure_filename(
+                  uploaded.filename
+              )
+
+              if not filename:
+                  return redirect(
+                      "/dashboard?message=Nome de arquivo invalido."
+                  )
+
+              # Evita nomes perigosos
+              if filename in [
+                  ".",
+                  ".."
+              ]:
+                  return redirect(
+                      "/dashboard?message=Arquivo invalido."
+                  )
+
+              destination = (
+                  UPLOADS_DIR / filename
+              )
+
+              uploaded.save(destination)
+
+              send_webhook(
+                  "Arquivo enviado",
+                  "Novo arquivo enviado para o Skyro Cloud.",
+                  [
+                      {
+                          "name": "Arquivo",
+                          "value": filename,
+                          "inline": True
+                      }
+                  ]
+              )
+
+              return redirect(
+                  "/dashboard?message=Arquivo enviado com sucesso."
+              )
+
+
+          # ======================================================
+          # DOWNLOAD
+          # ======================================================
+
+          @app.route(
+              "/download/<path:filename>"
+          )
+          def download(filename):
+
+              if not logged():
+                  return redirect("/")
+
+              safe_name = secure_filename(
+                  filename
+              )
+
+              return send_from_directory(
+                  UPLOADS_DIR,
+                  safe_name,
+                  as_attachment=True
+              )
+
+
+          # ======================================================
+          # DELETE
+          # ======================================================
+
+          @app.route(
+              "/delete/<path:filename>"
+          )
+          def delete_file(filename):
+
+              if not logged():
+                  return redirect("/")
+
+              safe_name = secure_filename(
+                  filename
+              )
+
+              target = (
+                  UPLOADS_DIR / safe_name
+              )
+
+              if target.exists() and target.is_file():
+
+                  # Se estiver rodando, tenta parar
+                  if safe_name in processes:
+
+                      process = processes[
+                          safe_name
+                      ]
+
+                      if process.poll() is None:
+
+                          process.terminate()
+
+                      processes.pop(
+                          safe_name,
+                          None
+                      )
+
+                  target.unlink()
+
+              return redirect(
+                  "/dashboard?message=Arquivo excluido."
+              )
+
+
+          # ======================================================
+          # RUN
+          # ======================================================
+
+          @app.route(
+              "/run/<path:filename>"
+          )
+          def run_file(filename):
+
+              if not logged():
+                  return redirect("/")
+
+              safe_name = secure_filename(
+                  filename
+              )
+
+              target = (
+                  UPLOADS_DIR / safe_name
+              )
+
+              if not target.exists():
+                  return redirect(
+                      "/dashboard?message=Arquivo nao encontrado."
+                  )
+
+              extension = target.suffix.lower()
+
+              if extension not in [
+                  ".py",
+                  ".js"
+              ]:
+
+                  return redirect(
+                      "/dashboard?message=Somente Python e Node podem ser executados."
+                  )
+
+              if safe_name in processes:
+
+                  old = processes[
+                      safe_name
+                  ]
+
+                  if old.poll() is None:
+
+                      return redirect(
+                          "/dashboard?message=Esse arquivo ja esta rodando."
+                      )
+
+              log_file = (
+                  LOGS_DIR /
+                  f"{safe_name}.log"
+              )
+
+              log_handle = open(
+                  log_file,
+                  "a",
+                  encoding="utf-8"
+              )
+
+              try:
+
+                  if extension == ".py":
+
+                      command = [
+                          sys.executable,
+                          str(target)
+                      ]
+
+                  else:
+
+                      command = [
+                          "node",
+                          str(target)
+                      ]
+
+                  process = subprocess.Popen(
+                      command,
+                      cwd=str(UPLOADS_DIR),
+                      stdout=log_handle,
+                      stderr=subprocess.STDOUT,
+                      creationflags=(
+                          subprocess.CREATE_NEW_PROCESS_GROUP
+                          if os.name == "nt"
+                          else 0
+                      )
+                  )
+
+                  processes[safe_name] = process
+
+                  send_webhook(
+                      "Bot iniciado",
+                      f"O arquivo `{safe_name}` foi iniciado.",
+                      [
+                          {
+                              "name": "PID",
+                              "value": str(process.pid),
+                              "inline": True
+                          }
+                      ]
+                  )
+
+                  return redirect(
+                      "/dashboard?message=Processo iniciado."
+                  )
+
+              except Exception as exc:
+
+                  log_handle.write(
+                      f"ERRO AO INICIAR: {exc}\\n"
+                  )
+
+                  log_handle.close()
+
+                  return redirect(
+                      "/dashboard?message=Erro ao iniciar processo."
+                  )
+
+
+          # ======================================================
+          # STOP
+          # ======================================================
+
+          @app.route(
+              "/stop/<path:filename>"
+          )
+          def stop_file(filename):
+
+              if not logged():
+                  return redirect("/")
+
+              safe_name = secure_filename(
+                  filename
+              )
+
+              process = processes.get(
+                  safe_name
+              )
+
+              if process:
+
+                  try:
+
+                      if process.poll() is None:
+
+                          process.terminate()
+
+                          try:
+
+                              process.wait(
+                                  timeout=5
+                              )
+
+                          except subprocess.TimeoutExpired:
+
+                              process.kill()
+
+                  except Exception:
+                      pass
+
+                  processes.pop(
+                      safe_name,
+                      None
+                  )
+
+              return redirect(
+                  "/dashboard?message=Processo parado."
+              )
+
+
+          # ======================================================
+          # LOG
+          # ======================================================
+
+          @app.route(
+              "/logs/<path:filename>"
+          )
+          def logs(filename):
+
+              if not logged():
+                  return redirect("/")
+
+              safe_name = secure_filename(
+                  filename
+              )
+
+              log_path = (
+                  LOGS_DIR /
+                  f"{safe_name}.log"
+              )
+
+              if not log_path.exists():
+
+                  return (
+                      "Nenhum log encontrado.",
+                      404
+                  )
+
+              return (
+                  "<pre style='background:#08080c;color:white;"
+                  "padding:20px;white-space:pre-wrap;'>"
+                  + log_path.read_text(
+                      encoding="utf-8",
+                      errors="replace"
+                  )
+                  + "</pre>"
+              )
+
+
+          # ======================================================
+          # LOGOUT
+          # ======================================================
+
+          @app.route("/logout")
+          def logout():
+
+              session.clear()
+
+              return redirect("/")
+
+
+          # ======================================================
+          # START
+          # ======================================================
+
+          if __name__ == "__main__":
+
+              send_webhook(
+                  "Skyro Cloud Online",
+                  "O painel foi iniciado.",
+                  [
+                      {
+                          "name": "Hostname",
+                          "value": socket.gethostname(),
+                          "inline": True
+                      },
+                      {
+                          "name": "Sistema",
+                          "value": platform.platform(),
+                          "inline": True
+                      },
+                      {
+                          "name": "Python",
+                          "value": platform.python_version(),
+                          "inline": True
+                      }
+                  ]
+              )
+
+              print(
+                  f"[SKYRO] Painel online na porta {PORT}"
+              )
+
+              app.run(
+                  host="0.0.0.0",
+                  port=PORT,
+                  threaded=True
+              )
+          '@ | Set-Content -Path $App -Encoding UTF8
+
+          Write-Host "[OK] Painel criado:"
+          Write-Host $App
+
+      # ==========================================================
+      # 06 - INICIAR PAINEL
+      # ==========================================================
+
+      - name: "06 - Iniciar painel"
+        shell: powershell
+        env:
+          SKYRO_ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          SKYRO_ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
+          SKYRO_PORT: ${{ env.PANEL_PORT }}
+          SKYRO_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $Python = (Get-Command python).Source
+
+          $App = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              "skyro\app.py"
+
+          $LogDir = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              "skyro\logs"
+
+          New-Item `
+              -ItemType Directory `
+              -Path $LogDir `
+              -Force |
+              Out-Null
+
+          $StdOut = Join-Path `
+              $LogDir `
+              "panel-output.log"
+
+          $StdErr = Join-Path `
+              $LogDir `
+              "panel-error.log"
+
+          Remove-Item `
+              $StdOut `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          Remove-Item `
+              $StdErr `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          $Process = Start-Process `
+              -FilePath $Python `
+              -ArgumentList "`"$App`"" `
+              -WorkingDirectory (
+                  Join-Path `
+                      $env:GITHUB_WORKSPACE `
+                      "skyro"
+              ) `
+              -RedirectStandardOutput $StdOut `
+              -RedirectStandardError $StdErr `
+              -PassThru `
+              -WindowStyle Hidden
+
+          Start-Sleep -Seconds 5
+
+          if ($Process.HasExited) {
+
+              Write-Host "===== PANEL STDOUT ====="
+
+              if (Test-Path $StdOut) {
+                  Get-Content $StdOut
+              }
+
+              Write-Host "===== PANEL STDERR ====="
+
+              if (Test-Path $StdErr) {
+                  Get-Content $StdErr
+              }
+
+              throw "O painel encerrou durante a inicializacao."
+          }
+
+          Write-Host "[OK] Painel iniciado."
+          Write-Host "PID: $($Process.Id)"
+
+      # ==========================================================
+      # 07 - DEV TUNNEL
+      # ==========================================================
+
+      - name: "07 - Instalar Dev Tunnel"
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          $Tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          $InstallDir = "$env:USERPROFILE\devtunnel"
+          $Zip = "$env:TEMP\devtunnel.zip"
 
-          if (!(Test-Path $Tailscale)) {
-              $Tailscale = "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe"
+          New-Item `
+              -ItemType Directory `
+              -Path $InstallDir `
+              -Force |
+              Out-Null
+
+          Invoke-WebRequest `
+              -Uri "https://aka.ms/DevTunnelCliDownload/win-x64" `
+              -OutFile $Zip
+
+          Expand-Archive `
+              -Path $Zip `
+              -DestinationPath $InstallDir `
+              -Force
+
+          $DevTunnel = Get-ChildItem `
+              -Path $InstallDir `
+              -Filter "devtunnel.exe" `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+
+          if (-not $DevTunnel) {
+              throw "devtunnel.exe nao encontrado."
           }
 
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "                    RDP PRONTO"
-          Write-Host "============================================================"
+          "DEV_TUNNEL_PATH=$($DevTunnel.FullName)" |
+              Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
-          Write-Host ""
-          Write-Host "IP TAILSCALE:"
-          Write-Host ""
+          Write-Host "[OK] Dev Tunnel instalado."
 
-          $IP = & $Tailscale ip -4
+      # ==========================================================
+      # 08 - PUBLICAR SITE
+      # ==========================================================
 
-          if ([string]::IsNullOrWhiteSpace($IP)) {
-              throw "Nao foi possivel obter o IP Tailscale."
+      - name: "08 - Publicar painel"
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $TunnelLog = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              "skyro\devtunnel.log"
+
+          $TunnelErr = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              "skyro\devtunnel-error.log"
+
+          Remove-Item `
+              $TunnelLog `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          Remove-Item `
+              $TunnelErr `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          $TunnelProcess = Start-Process `
+              -FilePath $env:DEV_TUNNEL_PATH `
+              -ArgumentList "host -p $env:PANEL_PORT --allow-anonymous" `
+              -RedirectStandardOutput $TunnelLog `
+              -RedirectStandardError $TunnelErr `
+              -PassThru `
+              -WindowStyle Hidden
+
+          $PublicUrl = $null
+
+          for ($i = 1; $i -le 45; $i++) {
+
+              Start-Sleep -Seconds 2
+
+              if (Test-Path $TunnelLog) {
+
+                  $Content = Get-Content `
+                      $TunnelLog `
+                      -Raw `
+                      -ErrorAction SilentlyContinue
+
+                  $Match = [regex]::Match(
+                      $Content,
+                      'https://[a-zA-Z0-9\-]+-[0-9]+\.devtunnels\.ms[^\s]*'
+                  )
+
+                  if ($Match.Success) {
+
+                      $PublicUrl = $Match.Value.TrimEnd(
+                          '.',
+                          ',',
+                          ')',
+                          ']'
+                      )
+
+                      break
+                  }
+              }
+
+              if ($TunnelProcess.HasExited) {
+                  break
+              }
           }
 
-          Write-Host "  $IP"
+          if ([string]::IsNullOrWhiteSpace($PublicUrl)) {
 
-          Write-Host ""
-          Write-Host "CREDENCIAIS:"
-          Write-Host ""
-          Write-Host "  Usuario : RDPUser"
-          Write-Host "  Senha   : Rdp@2026!Windows"
+              Write-Host "===== DEV TUNNEL ====="
+
+              if (Test-Path $TunnelLog) {
+                  Get-Content $TunnelLog
+              }
+
+              Write-Host "===== DEV TUNNEL ERROR ====="
+
+              if (Test-Path $TunnelErr) {
+                  Get-Content $TunnelErr
+              }
+
+              throw "Nao foi possivel obter a URL publica."
+          }
+
+          "SKYRO_PANEL_URL=$PublicUrl" |
+              Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " Use o IP acima no cliente de Area de Trabalho Remota."
+          Write-Host "                  SKYRO CLOUD ONLINE"
           Write-Host "============================================================"
           Write-Host ""
+          Write-Host "SITE:"
+          Write-Host $PublicUrl
+          Write-Host ""
+          Write-Host "ADMIN:"
+          Write-Host $env:ADMIN_EMAIL
+          Write-Host $env:ADMIN_PASSWORD
+          Write-Host ""
+          Write-Host "RDP:"
+          Write-Host $env:RDP_USER
+          Write-Host $env:RDP_PASSWORD
+          Write-Host ""
+          Write-Host "============================================================"
 
-      # ============================================================
-      # 6. MANTER O RDP ATIVO
-      # ============================================================
+      # ==========================================================
+      # 09 - WEBHOOK
+      # ==========================================================
 
-      - name: "06 - Manter RDP ativo"
+      - name: "09 - Enviar log Discord"
+        shell: powershell
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          if ([string]::IsNullOrWhiteSpace(
+              $env:DISCORD_WEBHOOK_URL
+          )) {
+
+              Write-Host "[INFO] DISCORD_WEBHOOK_URL nao configurado."
+              exit 0
+          }
+
+          try {
+
+              $IP = (
+                  Invoke-RestMethod `
+                      -Uri "https://api.ipify.org" `
+                      -TimeoutSec 10
+              ).ToString()
+
+          }
+          catch {
+
+              $IP = "N/A"
+          }
+
+          $Payload = @{
+              username = "Skyro Bot Cloud"
+
+              embeds = @(
+                  @{
+                      title = "Skyro Cloud Online"
+
+                      description = "A VM foi iniciada."
+
+                      fields = @(
+                          @{
+                              name = "Criado por"
+                              value = "GitHub Actions"
+                              inline = $true
+                          },
+                          @{
+                              name = "IP publico"
+                              value = $IP
+                              inline = $true
+                          },
+                          @{
+                              name = "Runner"
+                              value = "windows-2025"
+                              inline = $true
+                          },
+                          @{
+                              name = "Painel"
+                              value = $env:SKYRO_PANEL_URL
+                              inline = $false
+                          }
+                      )
+
+                      footer = @{
+                          text = "Skyro Bot Cloud"
+                      }
+                  }
+              )
+          } |
+          ConvertTo-Json -Depth 10
+
+          try {
+
+              Invoke-RestMethod `
+                  -Uri $env:DISCORD_WEBHOOK_URL `
+                  -Method Post `
+                  -ContentType "application/json" `
+                  -Body $Payload
+
+              Write-Host "[OK] Webhook enviado."
+
+          }
+          catch {
+
+              Write-Host "[AVISO] Falha no webhook:"
+              Write-Host $_
+          }
+
+      # ==========================================================
+      # 10 - MANTER VM
+      # ==========================================================
+
+      - name: "10 - Manter Cloud Online"
         shell: powershell
         run: |
           $ErrorActionPreference = "Continue"
 
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host "                 RDP ONLINE"
-          Write-Host "============================================================"
-          Write-Host ""
-          Write-Host "Usuario : RDPUser"
-          Write-Host "Senha   : Rdp@2026!Windows"
-          Write-Host ""
-          Write-Host "O workflow permanecera ativo enquanto o runner estiver ativo."
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host ""
-
           while ($true) {
 
-              $Time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+              $Time = Get-Date `
+                  -Format "yyyy-MM-dd HH:mm:ss"
 
-              $RDPService = Get-Service `
-                  -Name "TermService" `
-                  -ErrorAction SilentlyContinue
-
-              if ($RDPService -and $RDPService.Status -eq "Running") {
-                  Write-Host "[$Time] [ONLINE] RDP funcionando."
-              }
-              else {
-                  Write-Host "[$Time] [AVISO] Servico RDP nao esta rodando."
-
-                  try {
-                      Start-Service `
-                          -Name "TermService" `
-                          -ErrorAction SilentlyContinue
-
-                      Write-Host "[$Time] [OK] Tentativa de reiniciar RDP realizada."
-                  }
-                  catch {
-                      Write-Host "[$Time] [ERRO] Falha ao reiniciar RDP."
-                  }
-              }
+              Write-Host ""
+              Write-Host "[$Time] SKYRO CLOUD - ONLINE"
 
               Start-Sleep -Seconds 60
           }
