@@ -1,85 +1,87 @@
-name: Skyro Bot Cloud
+name: Skyro RDP
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  cloud:
-    name: Skyro Bot Cloud
+  rdp:
     runs-on: windows-2025
     timeout-minutes: 360
 
     env:
       RDP_USER: RDPUser
-      RDP_PASSWORD: "Skyro@2026!Rdp"
-
-      ADMIN_EMAIL: "thedark.png@gmail.com"
-      ADMIN_PASSWORD: "Skyro@2026!Admin"
-
-      PANEL_PORT: "5000"
+      RDP_PASSWORD: Skyro
 
     steps:
 
-      # ============================================================
-      # 1. INFORMAÇÕES DA VM
-      # ============================================================
-      - name: Informações da VM
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host " SKYRO BOT CLOUD"
-          Write-Host "=========================================="
-          Write-Host ""
-
-          Write-Host "Hostname:"
-          hostname
-
-          Write-Host ""
-          Write-Host "Sistema:"
-          Get-CimInstance Win32_OperatingSystem |
-            Select-Object Caption, Version, OSArchitecture |
-            Format-List
-
-          Write-Host ""
-          Write-Host "CPU:"
-          Get-CimInstance Win32_Processor |
-            Select-Object Name, NumberOfCores, NumberOfLogicalProcessors |
-            Format-List
-
-          Write-Host ""
-          Write-Host "RAM:"
-          $ram = Get-CimInstance Win32_ComputerSystem
-          Write-Host ("{0:N2} GB" -f ($ram.TotalPhysicalMemory / 1GB))
-
-          Write-Host ""
-          Write-Host "Python:"
-          python --version
-
-          Write-Host ""
-          Write-Host "Node:"
-          node --version
-
-          Write-Host ""
-          Write-Host "NPM:"
-          npm --version
-
-          Write-Host ""
-          Write-Host "=========================================="
-
-      # ============================================================
-      # 2. CONFIGURAR RDP
-      # ============================================================
       - name: Configurar RDP
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Configurando Remote Desktop..."
+          Write-Host "Configurando RDP..."
+
+          # Criar politica de senha sem complexidade
+          $policy = "$env:TEMP\skyro-policy.inf"
+
+          secedit /export /cfg "$policy" /quiet
+
+          if (Test-Path $policy) {
+              $content = Get-Content $policy -Raw
+
+              $content = $content -replace 'PasswordComplexity\s*=\s*\d+', 'PasswordComplexity = 0'
+              $content = $content -replace 'MinimumPasswordLength\s*=\s*\d+', 'MinimumPasswordLength = 5'
+
+              Set-Content $policy $content -Encoding Unicode
+
+              secedit /configure `
+                /db "$env:TEMP\skyro.sdb" `
+                /cfg "$policy" `
+                /areas SECURITYPOLICY `
+                /quiet
+          }
+
+          net accounts /minpwlen:5 | Out-Null
+
+          Start-Sleep -Seconds 2
+
+          # Criar/atualizar usuário
+          $user = Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue
+
+          if ($null -eq $user) {
+              $password = ConvertTo-SecureString `
+                $env:RDP_PASSWORD `
+                -AsPlainText `
+                -Force
+
+              New-LocalUser `
+                -Name $env:RDP_USER `
+                -Password $password `
+                -FullName "Skyro RDP" `
+                -Description "Skyro RDP User" `
+                -PasswordNeverExpires
+          }
+          else {
+              $password = ConvertTo-SecureString `
+                $env:RDP_PASSWORD `
+                -AsPlainText `
+                -Force
+
+              Set-LocalUser `
+                -Name $env:RDP_USER `
+                -Password $password
+          }
+
+          # Grupos
+          Add-LocalGroupMember `
+            -Group "Administrators" `
+            -Member $env:RDP_USER `
+            -ErrorAction SilentlyContinue
+
+          Add-LocalGroupMember `
+            -Group "Remote Desktop Users" `
+            -Member $env:RDP_USER `
+            -ErrorAction SilentlyContinue
 
           # Ativar RDP
           Set-ItemProperty `
@@ -87,1469 +89,138 @@ jobs:
             -Name "fDenyTSConnections" `
             -Value 0
 
-          # Ativar autenticação de nível de rede
           Set-ItemProperty `
             -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
             -Name "UserAuthentication" `
-            -Value 1
+            -Value 0
 
-          # Ativar firewall RDP
-          Get-NetFirewallRule -DisplayGroup "Remote Desktop" |
-            Enable-NetFirewallRule
+          # Firewall
+          Enable-NetFirewallRule `
+            -DisplayGroup "Remote Desktop"
 
-          # Iniciar serviço
-          Set-Service -Name "TermService" -StartupType Automatic
-          Start-Service -Name "TermService" -ErrorAction SilentlyContinue
+          # Serviço RDP
+          Set-Service `
+            -Name "TermService" `
+            -StartupType Automatic
 
-          # Criar/atualizar usuário
-          $password = ConvertTo-SecureString `
-            $env:RDP_PASSWORD `
-            -AsPlainText `
-            -Force
+          Start-Service `
+            -Name "TermService"
 
-          $existingUser = Get-LocalUser `
-            -Name $env:RDP_USER `
-            -ErrorAction SilentlyContinue
-
-          if ($null -eq $existingUser) {
-
-            Write-Host "Criando usuário $env:RDP_USER..."
-
-            New-LocalUser `
-              -Name $env:RDP_USER `
-              -Password $password `
-              -FullName "Skyro RDP User" `
-              -Description "Skyro Bot Cloud RDP User" `
-              -PasswordNeverExpires `
-              -AccountNeverExpires
-
-          }
-          else {
-
-            Write-Host "Usuário já existe. Atualizando senha..."
-
-            Set-LocalUser `
-              -Name $env:RDP_USER `
-              -Password $password `
-              -PasswordNeverExpires $true
-
-          }
-
-          # Administradores
-          $adminGroup = (Get-LocalGroup |
-            Where-Object {
-              $_.SID.Value -eq "S-1-5-32-544"
-            }).Name
-
-          $alreadyAdmin = Get-LocalGroupMember `
-            -Group $adminGroup `
-            -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -match "\\$([regex]::Escape($env:RDP_USER))$"
-            }
-
-          if ($null -eq $alreadyAdmin) {
-            Add-LocalGroupMember `
-              -Group $adminGroup `
-              -Member $env:RDP_USER
-          }
+          Start-Sleep -Seconds 3
 
           Write-Host ""
-          Write-Host "RDP configurado."
-          Write-Host "Usuário: $env:RDP_USER"
-          Write-Host "Senha: $env:RDP_PASSWORD"
-
+          Write-Host "================================"
+          Write-Host "RDP CONFIGURADO"
+          Write-Host "Usuario: $env:RDP_USER"
+          Write-Host "Senha:   $env:RDP_PASSWORD"
+          Write-Host "================================"
           Write-Host ""
-          Write-Host "Status TermService:"
-          Get-Service TermService |
-            Select-Object Name, Status, StartType |
-            Format-List
 
-      # ============================================================
-      # 3. PREPARAR PYTHON
-      # ============================================================
-      - name: Preparar Python
-        uses: actions/setup-python@v5
+
+      - name: Conectar Tailscale
+        uses: tailscale/github-action@v4
         with:
-          python-version: "3.12"
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          version: latest
 
-      - name: Instalar dependências Python
+
+      - name: Obter IP do Tailscale
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          python --version
-          python -m pip --version
+          Write-Host "Obtendo IP do Tailscale..."
 
-          python -m pip install --upgrade pip
-          python -m pip install flask psutil
+          $ip = $null
 
-      # ============================================================
-      # 4. CRIAR ESTRUTURA SKYRO
-      # ============================================================
-      - name: Criar estrutura Skyro
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
+          for ($i = 1; $i -le 15; $i++) {
+              $ip = (tailscale ip -4 | Select-Object -First 1).Trim()
 
-          $root = Join-Path $env:GITHUB_WORKSPACE "skyro"
-
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $root "projects") | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $root "uploads") | Out-Null
-          New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
-
-          Write-Host "Estrutura criada:"
-          Get-ChildItem $root
-
-      # ============================================================
-      # 5. CRIAR PAINEL
-      # ============================================================
-      - name: Criar painel
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $root = Join-Path $env:GITHUB_WORKSPACE "skyro"
-          $app = Join-Path $root "app.py"
-
-          @'
-          import os
-          import sys
-          import time
-          import signal
-          import socket
-          import platform
-          import subprocess
-          from pathlib import Path
-
-          import psutil
-          from flask import (
-              Flask,
-              request,
-              redirect,
-              url_for,
-              session,
-              render_template_string,
-              send_from_directory,
-              flash
-          )
-
-          app = Flask(__name__)
-
-          app.secret_key = os.environ.get(
-              "SKYRO_SESSION_SECRET",
-              "skyro-session-secret-change-this"
-          )
-
-          BASE_DIR = Path(__file__).resolve().parent
-          PROJECTS_DIR = BASE_DIR / "projects"
-          UPLOADS_DIR = BASE_DIR / "uploads"
-          LOGS_DIR = BASE_DIR / "logs"
-
-          PROJECTS_DIR.mkdir(exist_ok=True)
-          UPLOADS_DIR.mkdir(exist_ok=True)
-          LOGS_DIR.mkdir(exist_ok=True)
-
-          ADMIN_EMAIL = os.environ.get(
-              "ADMIN_EMAIL",
-              "thedark.png@gmail.com"
-          )
-
-          ADMIN_PASSWORD = os.environ.get(
-              "ADMIN_PASSWORD",
-              "Skyro@2026!Admin"
-          )
-
-          PANEL_PORT = int(
-              os.environ.get("PANEL_PORT", "5000")
-          )
-
-          processes = {}
-
-          ALLOWED_EXTENSIONS = {
-              ".py",
-              ".js",
-              ".json",
-              ".txt",
-              ".md",
-              ".env",
-              ".yml",
-              ".yaml",
-              ".html",
-              ".css",
-              ".bat",
-              ".cmd",
-              ".sh"
-          }
-
-          HTML = r"""
-          <!DOCTYPE html>
-          <html lang="pt-BR">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport"
-                   content="width=device-width, initial-scale=1.0">
-
-              <title>Skyro Bot Cloud</title>
-
-              <style>
-                  * {
-                      box-sizing: border-box;
-                      margin: 0;
-                      padding: 0;
-                  }
-
-                  body {
-                      background: #0b0b0f;
-                      color: #f5f5f5;
-                      font-family: Arial, Helvetica, sans-serif;
-                  }
-
-                  .top {
-                      height: 70px;
-                      background: #111116;
-                      border-bottom: 1px solid #27272f;
-                      display: flex;
-                      align-items: center;
-                      justify-content: space-between;
-                      padding: 0 28px;
-                  }
-
-                  .logo {
-                      font-size: 21px;
-                      font-weight: 800;
-                      color: #ff4500;
-                  }
-
-                  .logout {
-                      color: #aaa;
-                      text-decoration: none;
-                  }
-
-                  .logout:hover {
-                      color: white;
-                  }
-
-                  .container {
-                      max-width: 1250px;
-                      margin: 30px auto;
-                      padding: 0 20px;
-                  }
-
-                  .grid {
-                      display: grid;
-                      grid-template-columns:
-                          repeat(auto-fit, minmax(220px, 1fr));
-                      gap: 16px;
-                      margin-bottom: 25px;
-                  }
-
-                  .card {
-                      background: #111116;
-                      border: 1px solid #25252d;
-                      border-radius: 14px;
-                      padding: 20px;
-                  }
-
-                  .card h3 {
-                      font-size: 13px;
-                      color: #999;
-                      margin-bottom: 10px;
-                  }
-
-                  .value {
-                      font-size: 20px;
-                      font-weight: bold;
-                  }
-
-                  .online {
-                      color: #4ade80;
-                  }
-
-                  .orange {
-                      color: #ff4500;
-                  }
-
-                  .section {
-                      background: #111116;
-                      border: 1px solid #25252d;
-                      border-radius: 14px;
-                      padding: 22px;
-                      margin-bottom: 20px;
-                  }
-
-                  .section h2 {
-                      font-size: 18px;
-                      margin-bottom: 18px;
-                  }
-
-                  form {
-                      display: flex;
-                      gap: 10px;
-                      flex-wrap: wrap;
-                  }
-
-                  input[type=file] {
-                      background: #19191f;
-                      border: 1px solid #303039;
-                      color: white;
-                      padding: 10px;
-                      border-radius: 8px;
-                  }
-
-                  button {
-                      border: 0;
-                      border-radius: 8px;
-                      padding: 10px 15px;
-                      cursor: pointer;
-                      font-weight: bold;
-                      background: #ff4500;
-                      color: white;
-                  }
-
-                  button:hover {
-                      opacity: .88;
-                  }
-
-                  .danger {
-                      background: #9f1239;
-                  }
-
-                  .file {
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      gap: 15px;
-                      padding: 14px 0;
-                      border-bottom: 1px solid #24242b;
-                      flex-wrap: wrap;
-                  }
-
-                  .file:last-child {
-                      border-bottom: 0;
-                  }
-
-                  .filename {
-                      word-break: break-all;
-                      font-weight: 600;
-                  }
-
-                  .actions {
-                      display: flex;
-                      gap: 8px;
-                      flex-wrap: wrap;
-                  }
-
-                  .actions a {
-                      text-decoration: none;
-                      color: white;
-                      background: #24242b;
-                      padding: 8px 12px;
-                      border-radius: 7px;
-                      font-size: 13px;
-                  }
-
-                  .actions a:hover {
-                      background: #33333d;
-                  }
-
-                  .flash {
-                      background: #24140d;
-                      border: 1px solid #7c2d12;
-                      color: #fdba74;
-                      border-radius: 8px;
-                      padding: 12px;
-                      margin-bottom: 15px;
-                  }
-
-                  .login {
-                      min-height: 100vh;
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      padding: 20px;
-                  }
-
-                  .login-box {
-                      width: 100%;
-                      max-width: 420px;
-                      background: #111116;
-                      border: 1px solid #25252d;
-                      border-radius: 16px;
-                      padding: 30px;
-                  }
-
-                  .login-box h1 {
-                      margin-bottom: 8px;
-                      color: #ff4500;
-                  }
-
-                  .login-box p {
-                      color: #888;
-                      margin-bottom: 25px;
-                  }
-
-                  .login-box input {
-                      width: 100%;
-                      background: #19191f;
-                      border: 1px solid #303039;
-                      border-radius: 8px;
-                      padding: 13px;
-                      color: white;
-                      margin-bottom: 12px;
-                      outline: none;
-                  }
-
-                  .login-box button {
-                      width: 100%;
-                  }
-
-                  .muted {
-                      color: #888;
-                  }
-              </style>
-          </head>
-
-          <body>
-
-          {% if page == "login" %}
-
-              <div class="login">
-                  <div class="login-box">
-
-                      <h1>Skyro</h1>
-                      <p>Bot Cloud Control Panel</p>
-
-                      {% with messages = get_flashed_messages() %}
-                          {% for message in messages %}
-                              <div class="flash">
-                                  {{ message }}
-                              </div>
-                          {% endfor %}
-                      {% endwith %}
-
-                      <form method="POST"
-                            style="display:block">
-
-                          <input
-                              type="email"
-                              name="email"
-                              placeholder="E-mail"
-                              required
-                          >
-
-                          <input
-                              type="password"
-                              name="password"
-                              placeholder="Senha"
-                              required
-                          >
-
-                          <button type="submit">
-                              Entrar
-                          </button>
-
-                      </form>
-
-                  </div>
-              </div>
-
-          {% else %}
-
-              <div class="top">
-                  <div class="logo">
-                      SKYRO BOT CLOUD
-                  </div>
-
-                  <a class="logout"
-                     href="{{ url_for('logout') }}">
-                      Sair
-                  </a>
-              </div>
-
-              <div class="container">
-
-                  {% with messages = get_flashed_messages() %}
-                      {% for message in messages %}
-                          <div class="flash">
-                              {{ message }}
-                          </div>
-                      {% endfor %}
-                  {% endwith %}
-
-                  <div class="grid">
-
-                      <div class="card">
-                          <h3>STATUS</h3>
-                          <div class="value online">
-                              ONLINE
-                          </div>
-                      </div>
-
-                      <div class="card">
-                          <h3>HOSTNAME</h3>
-                          <div class="value">
-                              {{ hostname }}
-                          </div>
-                      </div>
-
-                      <div class="card">
-                          <h3>CPU</h3>
-                          <div class="value">
-                              {{ cpu }}%
-                          </div>
-                      </div>
-
-                      <div class="card">
-                          <h3>RAM</h3>
-                          <div class="value">
-                              {{ ram }}%
-                          </div>
-                      </div>
-
-                      <div class="card">
-                          <h3>PYTHON</h3>
-                          <div class="value orange">
-                              {{ python_version }}
-                          </div>
-                      </div>
-
-                      <div class="card">
-                          <h3>NODE</h3>
-                          <div class="value orange">
-                              {{ node_version }}
-                          </div>
-                      </div>
-
-                  </div>
-
-                  <div class="section">
-
-                      <h2>Enviar arquivos</h2>
-
-                      <form
-                          method="POST"
-                          action="{{ url_for('upload') }}"
-                          enctype="multipart/form-data"
-                      >
-
-                          <input
-                              type="file"
-                              name="file"
-                              required
-                          >
-
-                          <button type="submit">
-                              Enviar
-                          </button>
-
-                      </form>
-
-                  </div>
-
-                  <div class="section">
-
-                      <h2>Arquivos</h2>
-
-                      {% if files %}
-
-                          {% for file in files %}
-
-                              <div class="file">
-
-                                  <div class="filename">
-                                      {{ file }}
-                                  </div>
-
-                                  <div class="actions">
-
-                                      <a href="{{ url_for(
-                                          'download',
-                                          filename=file
-                                      ) }}">
-                                          Baixar
-                                      </a>
-
-                                      {% if file.endswith('.py')
-                                         or file.endswith('.js') %}
-
-                                          <a href="{{ url_for(
-                                              'run_file',
-                                              filename=file
-                                          ) }}">
-                                              Iniciar
-                                          </a>
-
-                                          <a href="{{ url_for(
-                                              'stop_file',
-                                              filename=file
-                                          ) }}">
-                                              Parar
-                                          </a>
-
-                                      {% endif %}
-
-                                      <a href="{{ url_for(
-                                          'delete_file',
-                                          filename=file
-                                      ) }}">
-                                          Excluir
-                                      </a>
-
-                                  </div>
-
-                              </div>
-
-                          {% endfor %}
-
-                      {% else %}
-
-                          <p class="muted">
-                              Nenhum arquivo enviado.
-                          </p>
-
-                      {% endif %}
-
-                  </div>
-
-                  <div class="section">
-
-                      <h2>Processos ativos</h2>
-
-                      {% if running %}
-
-                          {% for item in running %}
-
-                              <div class="file">
-
-                                  <div class="filename">
-                                      {{ item }}
-                                  </div>
-
-                                  <div class="actions">
-                                      <a href="{{ url_for(
-                                          'stop_file',
-                                          filename=item
-                                      ) }}">
-                                          Parar
-                                      </a>
-                                  </div>
-
-                              </div>
-
-                          {% endfor %}
-
-                      {% else %}
-
-                          <p class="muted">
-                              Nenhum bot em execução.
-                          </p>
-
-                      {% endif %}
-
-                  </div>
-
-              </div>
-
-          {% endif %}
-
-          </body>
-          </html>
-          """
-
-          def logged():
-              return session.get("logged", False)
-
-
-          def safe_filename(filename):
-              filename = Path(filename).name
-
-              if not filename:
-                  return None
-
-              return filename
-
-
-          def file_path(filename):
-              safe = safe_filename(filename)
-
-              if safe is None:
-                  return None
-
-              return UPLOADS_DIR / safe
-
-
-          def allowed(filename):
-              suffix = Path(filename).suffix.lower()
-
-              return suffix in ALLOWED_EXTENSIONS
-
-
-          def get_node_version():
-              try:
-                  result = subprocess.run(
-                      ["node", "--version"],
-                      capture_output=True,
-                      text=True,
-                      timeout=5
-                  )
-
-                  if result.returncode == 0:
-                      return result.stdout.strip()
-
-              except Exception:
-                  pass
-
-              return "N/A"
-
-
-          def get_python_version():
-              return platform.python_version()
-
-
-          def running_processes():
-              active = []
-
-              dead = []
-
-              for filename, process in processes.items():
-
-                  if process.poll() is None:
-                      active.append(filename)
-
-                  else:
-                      dead.append(filename)
-
-              for filename in dead:
-                  processes.pop(filename, None)
-
-              return sorted(active)
-
-
-          def notify_discord(message):
-              webhook = os.environ.get("SKYRO_WEBHOOK", "").strip()
-
-              if not webhook:
-                  return
-
-              try:
-                  import urllib.request
-                  import json
-
-                  payload = json.dumps({
-                      "content": message
-                  }).encode("utf-8")
-
-                  req = urllib.request.Request(
-                      webhook,
-                      data=payload,
-                      headers={
-                          "Content-Type": "application/json"
-                      },
-                      method="POST"
-                  )
-
-                  urllib.request.urlopen(
-                      req,
-                      timeout=10
-                  )
-
-              except Exception:
-                  pass
-
-
-          @app.route("/", methods=["GET"])
-          def index():
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              return render_template_string(
-                  HTML,
-                  page="dashboard",
-                  hostname=socket.gethostname(),
-                  cpu=round(psutil.cpu_percent(interval=0.2), 1),
-                  ram=round(psutil.virtual_memory().percent, 1),
-                  python_version=get_python_version(),
-                  node_version=get_node_version(),
-                  files=sorted(
-                      [
-                          x.name
-                          for x in UPLOADS_DIR.iterdir()
-                          if x.is_file()
-                      ]
-                  ),
-                  running=running_processes()
-              )
-
-
-          @app.route("/login", methods=["GET", "POST"])
-          def login():
-
-              if request.method == "POST":
-
-                  email = request.form.get(
-                      "email",
-                      ""
-                  ).strip()
-
-                  password = request.form.get(
-                      "password",
-                      ""
-                  )
-
-                  if (
-                      email == ADMIN_EMAIL
-                      and password == ADMIN_PASSWORD
-                  ):
-
-                      session.clear()
-                      session["logged"] = True
-
-                      notify_discord(
-                          "Skyro Bot Cloud: login realizado."
-                      )
-
-                      return redirect(url_for("index"))
-
-                  flash("E-mail ou senha incorretos.")
-
-              return render_template_string(
-                  HTML,
-                  page="login"
-              )
-
-
-          @app.route("/logout")
-          def logout():
-
-              session.clear()
-
-              return redirect(url_for("login"))
-
-
-          @app.route("/upload", methods=["POST"])
-          def upload():
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              uploaded = request.files.get("file")
-
-              if uploaded is None:
-                  flash("Nenhum arquivo selecionado.")
-                  return redirect(url_for("index"))
-
-              filename = safe_filename(
-                  uploaded.filename or ""
-              )
-
-              if not filename:
-                  flash("Nome de arquivo inválido.")
-                  return redirect(url_for("index"))
-
-              if not allowed(filename):
-                  flash(
-                      "Tipo de arquivo não permitido."
-                  )
-
-                  return redirect(url_for("index"))
-
-              destination = UPLOADS_DIR / filename
-
-              uploaded.save(destination)
-
-              flash(
-                  f"Arquivo {filename} enviado com sucesso."
-              )
-
-              notify_discord(
-                  f"Skyro: arquivo enviado: {filename}"
-              )
-
-              return redirect(url_for("index"))
-
-
-          @app.route("/download/<path:filename>")
-          def download(filename):
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              safe = safe_filename(filename)
-
-              if safe is None:
-                  return "Arquivo inválido", 400
-
-              if not (UPLOADS_DIR / safe).is_file():
-                  return "Arquivo não encontrado", 404
-
-              return send_from_directory(
-                  UPLOADS_DIR,
-                  safe,
-                  as_attachment=True
-              )
-
-
-          @app.route("/delete/<path:filename>")
-          def delete_file(filename):
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              safe = safe_filename(filename)
-
-              if safe is None:
-                  flash("Arquivo inválido.")
-                  return redirect(url_for("index"))
-
-              process = processes.get(safe)
-
-              if process is not None:
-
-                  if process.poll() is None:
-
-                      try:
-                          process.terminate()
-                          process.wait(timeout=5)
-
-                      except Exception:
-
-                          try:
-                              process.kill()
-                          except Exception:
-                              pass
-
-                  processes.pop(safe, None)
-
-              target = UPLOADS_DIR / safe
-
-              if target.is_file():
-
-                  try:
-                      target.unlink()
-                      flash(
-                          f"{safe} excluído."
-                      )
-
-                  except Exception as exc:
-                      flash(
-                          f"Erro ao excluir: {exc}"
-                      )
-
-              return redirect(url_for("index"))
-
-
-          @app.route("/run/<path:filename>")
-          def run_file(filename):
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              safe = safe_filename(filename)
-
-              if safe is None:
-                  flash("Arquivo inválido.")
-                  return redirect(url_for("index"))
-
-              target = UPLOADS_DIR / safe
-
-              if not target.is_file():
-                  flash("Arquivo não encontrado.")
-                  return redirect(url_for("index"))
-
-              suffix = target.suffix.lower()
-
-              if suffix not in {".py", ".js"}:
-                  flash(
-                      "Somente arquivos Python e Node.js podem ser executados."
-                  )
-
-                  return redirect(url_for("index"))
-
-              old = processes.get(safe)
-
-              if old is not None and old.poll() is None:
-                  flash(
-                      f"{safe} já está em execução."
-                  )
-
-                  return redirect(url_for("index"))
-
-              log_file = LOGS_DIR / f"{safe}.log"
-
-              try:
-
-                  log_handle = open(
-                      log_file,
-                      "a",
-                      encoding="utf-8",
-                      errors="ignore"
-                  )
-
-                  if suffix == ".py":
-
-                      command = [
-                          sys.executable,
-                          str(target)
-                      ]
-
-                  else:
-
-                      command = [
-                          "node",
-                          str(target)
-                      ]
-
-                  process = subprocess.Popen(
-                      command,
-                      cwd=str(UPLOADS_DIR),
-                      stdin=subprocess.DEVNULL,
-                      stdout=log_handle,
-                      stderr=subprocess.STDOUT,
-                      creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                  )
-
-                  processes[safe] = process
-
-                  flash(
-                      f"{safe} iniciado. PID: {process.pid}"
-                  )
-
-                  notify_discord(
-                      f"Skyro: bot iniciado: {safe}"
-                  )
-
-              except Exception as exc:
-
-                  flash(
-                      f"Erro ao iniciar {safe}: {exc}"
-                  )
-
-              return redirect(url_for("index"))
-
-
-          @app.route("/stop/<path:filename>")
-          def stop_file(filename):
-
-              if not logged():
-                  return redirect(url_for("login"))
-
-              safe = safe_filename(filename)
-
-              if safe is None:
-                  flash("Arquivo inválido.")
-                  return redirect(url_for("index"))
-
-              process = processes.get(safe)
-
-              if process is None:
-                  flash(
-                      f"{safe} não está em execução."
-                  )
-
-                  return redirect(url_for("index"))
-
-              try:
-
-                  if process.poll() is None:
-
-                      process.terminate()
-
-                      try:
-                          process.wait(timeout=5)
-
-                      except subprocess.TimeoutExpired:
-
-                          process.kill()
-
-                  processes.pop(safe, None)
-
-                  flash(
-                      f"{safe} parado."
-                  )
-
-                  notify_discord(
-                      f"Skyro: bot parado: {safe}"
-                  )
-
-              except Exception as exc:
-
-                  flash(
-                      f"Erro ao parar {safe}: {exc}"
-                  )
-
-              return redirect(url_for("index"))
-
-
-          @app.route("/health")
-          def health():
-              return {
-                  "status": "online",
-                  "service": "Skyro Bot Cloud"
-              }, 200
-
-
-          if __name__ == "__main__":
-
-              notify_discord(
-                  "Skyro Bot Cloud: painel iniciado."
-              )
-
-              app.run(
-                  host="0.0.0.0",
-                  port=PANEL_PORT,
-                  debug=False,
-                  threaded=True
-              )
-          '@ | Set-Content -Path $app -Encoding UTF8
-
-          Write-Host "Painel criado em:"
-          Write-Host $app
-
-      # ============================================================
-      # 6. INICIAR PAINEL
-      # ============================================================
-      - name: Iniciar painel
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $root = Join-Path $env:GITHUB_WORKSPACE "skyro"
-
-          $stdout = Join-Path $root "panel-output.log"
-          $stderr = Join-Path $root "panel-error.log"
-
-          if (Test-Path $stdout) {
-            Remove-Item $stdout -Force
-          }
-
-          if (Test-Path $stderr) {
-            Remove-Item $stderr -Force
-          }
-
-          $env:ADMIN_EMAIL = $env:ADMIN_EMAIL
-          $env:ADMIN_PASSWORD = $env:ADMIN_PASSWORD
-          $env:PANEL_PORT = $env:PANEL_PORT
-
-          if ($env:DISCORD_WEBHOOK_URL) {
-            $env:SKYRO_WEBHOOK = $env:DISCORD_WEBHOOK_URL
-          }
-
-          $process = Start-Process `
-            -FilePath "python" `
-            -ArgumentList @(
-              "-u",
-              (Join-Path $root "app.py")
-            ) `
-            -WorkingDirectory $root `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -WindowStyle Hidden `
-            -PassThru
-
-          Start-Sleep -Seconds 5
-
-          if ($process.HasExited) {
-
-            Write-Host "O painel encerrou inesperadamente."
-
-            if (Test-Path $stdout) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-            }
-
-            if (Test-Path $stderr) {
-              Get-Content $stderr -ErrorAction SilentlyContinue
-            }
-
-            throw "Falha ao iniciar o painel Flask."
-
-          }
-
-          Write-Host "Painel iniciado."
-          Write-Host "PID: $($process.Id)"
-
-          try {
-
-            $response = Invoke-WebRequest `
-              -Uri "http://127.0.0.1:$env:PANEL_PORT/health" `
-              -UseBasicParsing `
-              -TimeoutSec 10
-
-            Write-Host "Health check: $($response.StatusCode)"
-
-          }
-          catch {
-
-            Write-Host "Resposta do health check:"
-            Write-Host $_
-
-            if (Test-Path $stdout) {
-              Get-Content $stdout -ErrorAction SilentlyContinue
-            }
-
-            if (Test-Path $stderr) {
-              Get-Content $stderr -ErrorAction SilentlyContinue
-            }
-
-            throw "O painel não respondeu na porta $env:PANEL_PORT."
-          }
-
-      # ============================================================
-      # 7. INSTALAR DEV TUNNEL
-      # ============================================================
-      - name: Instalar Dev Tunnel
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $tools = Join-Path $env:RUNNER_TEMP "skyro-tools"
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $tools | Out-Null
-
-          $zip = Join-Path $tools "devtunnel.zip"
-
-          Write-Host "Baixando Dev Tunnel..."
-
-          Invoke-WebRequest `
-            -Uri "https://aka.ms/DevTunnelCliDownload/win-x64" `
-            -OutFile $zip `
-            -UseBasicParsing
-
-          Write-Host "Extraindo..."
-
-          Expand-Archive `
-            -Path $zip `
-            -DestinationPath $tools `
-            -Force
-
-          $exe = Get-ChildItem `
-            -Path $tools `
-            -Filter "devtunnel.exe" `
-            -Recurse `
-            -File |
-            Select-Object -First 1
-
-          if ($null -eq $exe) {
-            throw "devtunnel.exe não foi encontrado após a extração."
-          }
-
-          $devTunnelDir = $exe.Directory.FullName
-
-          Add-Content `
-            -Path $env:GITHUB_PATH `
-            -Value $devTunnelDir
-
-          Write-Host "Dev Tunnel encontrado:"
-          Write-Host $exe.FullName
-
-          & $exe.FullName --version
-
-      # ============================================================
-      # 8. PUBLICAR PAINEL
-      # ============================================================
-      - name: Publicar painel
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $root = Join-Path $env:GITHUB_WORKSPACE "skyro"
-          $tunnelLog = Join-Path $root "devtunnel.log"
-
-          if (Test-Path $tunnelLog) {
-            Remove-Item $tunnelLog -Force
-          }
-
-          $devTunnel = Get-Command devtunnel.exe `
-            -ErrorAction SilentlyContinue
-
-          if ($null -eq $devTunnel) {
-            throw "Dev Tunnel não está disponível no PATH."
-          }
-
-          Write-Host "Iniciando Dev Tunnel..."
-
-          $tunnelProcess = Start-Process `
-            -FilePath $devTunnel.Source `
-            -ArgumentList @(
-              "host",
-              "-p",
-              $env:PANEL_PORT,
-              "--allow-anonymous"
-            ) `
-            -RedirectStandardOutput $tunnelLog `
-            -RedirectStandardError $tunnelLog `
-            -WindowStyle Hidden `
-            -PassThru
-
-          Write-Host "PID do Dev Tunnel: $($tunnelProcess.Id)"
-
-          $url = $null
-
-          for ($i = 1; $i -le 30; $i++) {
-
-            Start-Sleep -Seconds 2
-
-            if ($tunnelProcess.HasExited) {
-
-              Write-Host "Dev Tunnel encerrou."
-
-              if (Test-Path $tunnelLog) {
-                Get-Content $tunnelLog -ErrorAction SilentlyContinue
+              if (-not [string]::IsNullOrWhiteSpace($ip)) {
+                  break
               }
 
-              throw "Dev Tunnel encerrou antes de fornecer a URL."
-            }
-
-            if (Test-Path $tunnelLog) {
-
-              $content = Get-Content `
-                $tunnelLog `
-                -Raw `
-                -ErrorAction SilentlyContinue
-
-              $match = [regex]::Match(
-                $content,
-                'https://[a-zA-Z0-9-]+-[0-9]+(?:\.[a-zA-Z0-9.-]+)?'
-              )
-
-              if ($match.Success) {
-                $url = $match.Value
-                break
-              }
-
-              $match = [regex]::Match(
-                $content,
-                'https://[^\s"]+\.devtunnels\.ms[^\s"]*'
-              )
-
-              if ($match.Success) {
-                $url = $match.Value.TrimEnd("/")
-                break
-              }
-            }
+              Start-Sleep -Seconds 2
           }
 
-          if ([string]::IsNullOrWhiteSpace($url)) {
-
-            Write-Host "Log completo do Dev Tunnel:"
-
-            if (Test-Path $tunnelLog) {
-              Get-Content $tunnelLog `
-                -ErrorAction SilentlyContinue
-            }
-
-            throw "Não foi possível descobrir a URL do Dev Tunnel."
+          if ([string]::IsNullOrWhiteSpace($ip)) {
+              throw "Nao foi possivel obter o IP do Tailscale."
           }
 
-          $url = $url.TrimEnd("/")
-
-          "SKYRO_PANEL_URL=$url" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Append `
-              -Encoding utf8
+          "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
           Write-Host ""
-          Write-Host "=========================================="
-          Write-Host " SKYRO ONLINE"
-          Write-Host "=========================================="
+          Write-Host "============================================"
+          Write-Host "          SKYRO RDP ONLINE"
+          Write-Host "============================================"
           Write-Host ""
-          Write-Host "Painel:"
-          Write-Host $url
+          Write-Host "Tailscale IP : $ip"
+          Write-Host "RDP IP       : $ip"
+          Write-Host "RDP Porta    : 3389"
+          Write-Host "Usuario      : $env:RDP_USER"
+          Write-Host "Senha        : $env:RDP_PASSWORD"
           Write-Host ""
-          Write-Host "Login:"
-          Write-Host $env:ADMIN_EMAIL
+          Write-Host "============================================"
           Write-Host ""
-          Write-Host "Senha:"
-          Write-Host $env:ADMIN_PASSWORD
-          Write-Host ""
-          Write-Host "RDP:"
-          Write-Host $env:RDP_USER
-          Write-Host ""
-          Write-Host "Senha RDP:"
-          Write-Host $env:RDP_PASSWORD
-          Write-Host ""
-          Write-Host "=========================================="
 
-      # ============================================================
-      # 9. DISCORD WEBHOOK
-      # ============================================================
-      - name: Enviar log Discord
-        if: always()
+
+      - name: Testar RDP
+        shell: powershell
+        run: |
+          Write-Host "Testando servico RDP..."
+
+          $service = Get-Service `
+            -Name "TermService" `
+            -ErrorAction Stop
+
+          if ($service.Status -ne "Running") {
+              Start-Service `
+                -Name "TermService"
+
+              Start-Sleep -Seconds 2
+          }
+
+          Write-Host "TermService: $((Get-Service TermService).Status)"
+
+          Write-Host ""
+          Write-Host "Testando porta 3389..."
+
+          $test = Test-NetConnection `
+            -ComputerName "127.0.0.1" `
+            -Port 3389 `
+            -WarningAction SilentlyContinue
+
+          if (-not $test.TcpTestSucceeded) {
+              throw "A porta 3389 nao esta acessivel."
+          }
+
+          Write-Host "Porta 3389: OK"
+
+
+      - name: Enviar acesso para Discord
         shell: powershell
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          $ErrorActionPreference = "Continue"
-
-          if ([string]::IsNullOrWhiteSpace(
-              $env:DISCORD_WEBHOOK_URL
-          )) {
-            Write-Host "DISCORD_WEBHOOK_URL não configurado."
-            Write-Host "Ignorando Discord."
-            exit 0
-          }
-
-          try {
-
-            $ip = (
-              Invoke-RestMethod `
-                -Uri "https://api.ipify.org" `
-                -TimeoutSec 10
-            ).ToString()
-
-          }
-          catch {
-
-            $ip = "Não disponível"
-          }
-
-          $panel = $env:SKYRO_PANEL_URL
-
-          if ([string]::IsNullOrWhiteSpace($panel)) {
-            $panel = "Não disponível"
+          if ([string]::IsNullOrWhiteSpace($env:DISCORD_WEBHOOK_URL)) {
+              Write-Host "DISCORD_WEBHOOK_URL nao configurado."
+              exit 0
           }
 
           $payload = @{
-            username = "Skyro Bot Cloud"
+              username = "Skyro RDP"
+              content = @"
+            **SKYRO RDP ONLINE**
 
-            embeds = @(
-              @{
-                title = "Skyro Bot Cloud Online"
-                description = "A VM foi iniciada com sucesso."
+            IP Tailscale: ``$env:TAILSCALE_IP``
+            Porta: ``3389``
+            Usuario: ``RDPUser``
+            Senha: ``Skyro``
 
-                color = 16729088
-
-                fields = @(
-                  @{
-                    name = "Painel"
-                    value = $panel
-                    inline = $false
-                  },
-                  @{
-                    name = "IP público"
-                    value = $ip
-                    inline = $true
-                  },
-                  @{
-                    name = "Runner"
-                    value = $env:RUNNER_NAME
-                    inline = $true
-                  },
-                  @{
-                    name = "RDP"
-                    value = "$env:RDP_USER / $env:RDP_PASSWORD"
-                    inline = $false
-                  }
-                )
-              }
-            )
-          } | ConvertTo-Json -Depth 10
+            Conecte pelo:
+            ``mstsc``
+            "@
+          } | ConvertTo-Json
 
           Invoke-RestMethod `
             -Uri $env:DISCORD_WEBHOOK_URL `
@@ -1557,66 +228,53 @@ jobs:
             -ContentType "application/json" `
             -Body $payload
 
-          Write-Host "Webhook Discord enviado."
+          Write-Host "Webhook enviado."
 
-      # ============================================================
-      # 10. MANTER CLOUD ONLINE
-      # ============================================================
-      - name: Manter Cloud Online
+
+      - name: Mostrar acesso
         shell: powershell
         run: |
-          $ErrorActionPreference = "Continue"
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "              SKYRO RDP ONLINE"
+          Write-Host "================================================"
+          Write-Host ""
+          Write-Host "IP TAILSCALE:"
+          Write-Host "$env:TAILSCALE_IP"
+          Write-Host ""
+          Write-Host "PORTA:"
+          Write-Host "3389"
+          Write-Host ""
+          Write-Host "USUARIO:"
+          Write-Host "RDPUser"
+          Write-Host ""
+          Write-Host "SENHA:"
+          Write-Host "Skyro"
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host ""
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host " SKYRO BOT CLOUD ESTÁ ONLINE"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "Painel:"
-          Write-Host $env:SKYRO_PANEL_URL
-          Write-Host ""
-          Write-Host "Usuário administrativo:"
-          Write-Host $env:ADMIN_EMAIL
-          Write-Host ""
-          Write-Host "Senha administrativa:"
-          Write-Host $env:ADMIN_PASSWORD
-          Write-Host ""
-          Write-Host "Usuário RDP:"
-          Write-Host $env:RDP_USER
-          Write-Host ""
-          Write-Host "Senha RDP:"
-          Write-Host $env:RDP_PASSWORD
-          Write-Host ""
-          Write-Host "A VM ficará ativa enquanto este job estiver executando."
-          Write-Host "=========================================="
-          Write-Host ""
+
+      - name: Manter VM online
+        shell: powershell
+        run: |
+          Write-Host "VM online."
 
           while ($true) {
 
-            $panelAlive = $false
+              $rdp = Get-Service `
+                -Name "TermService" `
+                -ErrorAction SilentlyContinue
 
-            try {
-
-              $response = Invoke-WebRequest `
-                -Uri "http://127.0.0.1:$env:PANEL_PORT/health" `
-                -UseBasicParsing `
-                -TimeoutSec 5
-
-              if ($response.StatusCode -eq 200) {
-                $panelAlive = $true
+              if ($null -eq $rdp) {
+                  Write-Host "TermService nao encontrado."
+              }
+              elseif ($rdp.Status -ne "Running") {
+                  Write-Host "RDP parado. Reiniciando..."
+                  Start-Service `
+                    -Name "TermService" `
+                    -ErrorAction SilentlyContinue
               }
 
-            }
-            catch {
-              $panelAlive = $false
-            }
-
-            if ($panelAlive) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Painel OK."
-            }
-            else {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] AVISO: painel não respondeu."
-            }
-
-            Start-Sleep -Seconds 30
+              Start-Sleep -Seconds 60
           }
