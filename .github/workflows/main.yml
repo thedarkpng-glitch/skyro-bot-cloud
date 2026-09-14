@@ -22,59 +22,18 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "================================"
           Write-Host "Configurando RDP..."
-          Write-Host "================================"
 
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
               throw "O Secret RDP_PASSWORD nao foi configurado."
           }
 
-          # --------------------------------------------------------
-          # Configurar politica de senha
-          # --------------------------------------------------------
-          Write-Host "Configurando politica de senha..."
+          # ==========================================================
+          # CRIAR USUARIO COM SENHA TEMPORARIA FORTE
+          # ==========================================================
 
-          $policy = "$env:TEMP\skyro-policy.inf"
-
-          secedit /export /cfg "$policy" /quiet
-
-          if (Test-Path $policy) {
-
-              $content = Get-Content "$policy" -Raw
-
-              $content = $content -replace `
-                'PasswordComplexity\s*=\s*\d+', `
-                'PasswordComplexity = 0'
-
-              $content = $content -replace `
-                'MinimumPasswordLength\s*=\s*\d+', `
-                'MinimumPasswordLength = 5'
-
-              Set-Content `
-                "$policy" `
-                $content `
-                -Encoding Unicode
-
-              secedit /configure `
-                /db "$env:TEMP\skyro.sdb" `
-                /cfg "$policy" `
-                /areas SECURITYPOLICY `
-                /quiet
-          }
-
-          # Garantir tamanho minimo
-          net accounts /minpwlen:5 /minpwage:0 /maxpwage:unlimited
-
-          Start-Sleep -Seconds 2
-
-          # --------------------------------------------------------
-          # Criar / atualizar usuario
-          # --------------------------------------------------------
-          Write-Host "Criando usuario RDP..."
-
-          $password = ConvertTo-SecureString `
-            $env:RDP_PASSWORD `
+          $temporaryPassword = ConvertTo-SecureString `
+            "SkyroTemp@2026!" `
             -AsPlainText `
             -Force
 
@@ -84,30 +43,94 @@ jobs:
 
           if ($null -eq $user) {
 
+              Write-Host "Criando usuario com senha temporaria..."
+
               New-LocalUser `
                 -Name $env:RDP_USER `
-                -Password $password `
+                -Password $temporaryPassword `
                 -FullName "Skyro RDP" `
                 -Description "Skyro RDP User" `
                 -PasswordNeverExpires `
                 -AccountNeverExpires
 
-              Write-Host "Usuario criado com sucesso."
-
+              Write-Host "Usuario criado."
           }
           else {
 
-              Set-LocalUser `
-                -Name $env:RDP_USER `
-                -Password $password
-
-              Write-Host "Senha do usuario atualizada."
+              Write-Host "Usuario ja existe."
           }
 
-          # --------------------------------------------------------
-          # Grupos
-          # --------------------------------------------------------
-          Write-Host "Configurando grupos..."
+          # ==========================================================
+          # DESABILITAR COMPLEXIDADE
+          # ==========================================================
+
+          Write-Host "Desabilitando complexidade de senha..."
+
+          $policy = "$env:TEMP\skyro-policy.inf"
+
+          secedit /export /cfg "$policy" /quiet
+
+          if (-not (Test-Path $policy)) {
+              throw "Nao foi possivel exportar a politica de seguranca."
+          }
+
+          $content = Get-Content "$policy" -Raw
+
+          if ($content -match 'PasswordComplexity\s*=') {
+              $content = $content -replace `
+                'PasswordComplexity\s*=\s*\d+', `
+                'PasswordComplexity = 0'
+          }
+          else {
+              $content += "`r`nPasswordComplexity = 0`r`n"
+          }
+
+          if ($content -match 'MinimumPasswordLength\s*=') {
+              $content = $content -replace `
+                'MinimumPasswordLength\s*=\s*\d+', `
+                'MinimumPasswordLength = 5'
+          }
+          else {
+              $content += "`r`nMinimumPasswordLength = 5`r`n"
+          }
+
+          Set-Content `
+            "$policy" `
+            $content `
+            -Encoding Unicode
+
+          secedit /configure `
+            /db "$env:TEMP\skyro.sdb" `
+            /cfg "$policy" `
+            /areas SECURITYPOLICY `
+            /quiet
+
+          Start-Sleep -Seconds 5
+
+          net accounts /minpwlen:5 | Out-Null
+
+          Start-Sleep -Seconds 3
+
+          # ==========================================================
+          # DEFINIR SENHA DO SECRET
+          # ==========================================================
+
+          Write-Host "Definindo senha do Secret RDP_PASSWORD..."
+
+          $finalPassword = ConvertTo-SecureString `
+            $env:RDP_PASSWORD `
+            -AsPlainText `
+            -Force
+
+          Set-LocalUser `
+            -Name $env:RDP_USER `
+            -Password $finalPassword
+
+          Write-Host "Senha definida com sucesso."
+
+          # ==========================================================
+          # GRUPOS
+          # ==========================================================
 
           Add-LocalGroupMember `
             -Group "Administrators" `
@@ -119,10 +142,9 @@ jobs:
             -Member $env:RDP_USER `
             -ErrorAction SilentlyContinue
 
-          # --------------------------------------------------------
-          # Ativar RDP
-          # --------------------------------------------------------
-          Write-Host "Ativando RDP..."
+          # ==========================================================
+          # ATIVAR RDP
+          # ==========================================================
 
           Set-ItemProperty `
             -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
@@ -134,18 +156,16 @@ jobs:
             -Name "UserAuthentication" `
             -Value 0
 
-          # --------------------------------------------------------
-          # Firewall
-          # --------------------------------------------------------
-          Write-Host "Configurando firewall..."
+          # ==========================================================
+          # FIREWALL
+          # ==========================================================
 
           Enable-NetFirewallRule `
             -DisplayGroup "Remote Desktop"
 
-          # --------------------------------------------------------
-          # Servico RDP
-          # --------------------------------------------------------
-          Write-Host "Iniciando TermService..."
+          # ==========================================================
+          # SERVICO
+          # ==========================================================
 
           Set-Service `
             -Name "TermService" `
@@ -160,11 +180,10 @@ jobs:
           Write-Host "================================"
           Write-Host "RDP CONFIGURADO"
           Write-Host "Usuario: $env:RDP_USER"
-          Write-Host "Senha:   $env:RDP_PASSWORD"
+          Write-Host "Senha definida pelo Secret"
           Write-Host "================================"
           Write-Host ""
-
-
+          
       # ============================================================
       # TAILSCALE
       # ============================================================
