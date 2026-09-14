@@ -15,6 +15,88 @@ jobs:
     steps:
 
       # ============================================================
+      # INSTALAR PROGRAMAS
+      # ============================================================
+      - name: Instalar programas
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "============================================"
+          Write-Host "        INSTALANDO PROGRAMAS"
+          Write-Host "============================================"
+
+          Write-Host "Atualizando fontes do Winget..."
+          winget source update --accept-source-agreements
+
+          Write-Host "Instalando Python..."
+          winget install --id Python.Python.3.13 `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+          Write-Host "Instalando Node.js LTS..."
+          winget install --id OpenJS.NodeJS.LTS `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+          Write-Host "Instalando Visual Studio Code..."
+          winget install --id Microsoft.VisualStudioCode `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+          Write-Host "Instalando 7-Zip..."
+          winget install --id 7zip.7zip `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+          Write-Host "Instalando FileZilla..."
+          winget install --id FileZilla.Client `
+            --exact `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+          Write-Host ""
+          Write-Host "Programas instalados."
+          Write-Host "Edge permanece instalado."
+          Write-Host "Google Chrome nao sera instalado."
+
+          # Atualizar PATH desta sessao
+          $env:Path = [System.Environment]::GetEnvironmentVariable(
+              "Path",
+              "Machine"
+          ) + ";" + [System.Environment]::GetEnvironmentVariable(
+              "Path",
+              "User"
+          )
+
+          Write-Host ""
+          Write-Host "Python:"
+          python --version
+
+          Write-Host ""
+          Write-Host "Node:"
+          node --version
+
+          Write-Host ""
+          Write-Host "NPM:"
+          npm --version
+
+
+      # ============================================================
       # CONFIGURAR RDP
       # ============================================================
       - name: Configurar RDP
@@ -22,115 +104,97 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Configurando RDP..."
+          Write-Host "============================================"
+          Write-Host "           CONFIGURANDO RDP"
+          Write-Host "============================================"
 
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
               throw "O Secret RDP_PASSWORD nao foi configurado."
           }
 
-          # ==========================================================
-          # CRIAR USUARIO COM SENHA TEMPORARIA FORTE
-          # ==========================================================
+          # --------------------------------------------------------
+          # Desativar complexidade de senha
+          # --------------------------------------------------------
 
-          $temporaryPassword = ConvertTo-SecureString `
-            "SkyroTemp@2026!" `
-            -AsPlainText `
-            -Force
+          Write-Host "Configurando politica de senha..."
+
+          $policy = "$env:TEMP\skyro-policy.inf"
+          $database = "$env:TEMP\skyro-security.sdb"
+
+          secedit /export `
+            /cfg "$policy" `
+            /quiet
+
+          if (Test-Path "$policy") {
+
+              $content = Get-Content "$policy" -Raw
+
+              $content = $content -replace `
+                'PasswordComplexity\s*=\s*\d+', `
+                'PasswordComplexity = 0'
+
+              $content = $content -replace `
+                'MinimumPasswordLength\s*=\s*\d+', `
+                'MinimumPasswordLength = 5'
+
+              Set-Content `
+                "$policy" `
+                $content `
+                -Encoding Unicode
+
+              secedit /configure `
+                /db "$database" `
+                /cfg "$policy" `
+                /areas SECURITYPOLICY `
+                /quiet
+          }
+
+          net accounts /minpwlen:5
+          net accounts /minpwage:0
+          net accounts /maxpwage:unlimited
+
+          Start-Sleep -Seconds 5
+
+          # --------------------------------------------------------
+          # Criar usuario normal
+          # --------------------------------------------------------
+
+          Write-Host "Criando usuario RDPUser..."
 
           $user = Get-LocalUser `
             -Name $env:RDP_USER `
             -ErrorAction SilentlyContinue
 
-          if ($null -eq $user) {
+          $password = ConvertTo-SecureString `
+            $env:RDP_PASSWORD `
+            -AsPlainText `
+            -Force
 
-              Write-Host "Criando usuario com senha temporaria..."
+          if ($null -eq $user) {
 
               New-LocalUser `
                 -Name $env:RDP_USER `
-                -Password $temporaryPassword `
-                -FullName "Skyro RDP" `
+                -Password $password `
+                -FullName "Skyro" `
                 -Description "Skyro RDP User" `
                 -PasswordNeverExpires `
                 -AccountNeverExpires
 
               Write-Host "Usuario criado."
+
           }
           else {
 
-              Write-Host "Usuario ja existe."
+              Set-LocalUser `
+                -Name $env:RDP_USER `
+                -Password $password
+
+              Write-Host "Usuario ja existia. Senha atualizada."
           }
 
-          # ==========================================================
-          # DESABILITAR COMPLEXIDADE
-          # ==========================================================
-
-          Write-Host "Desabilitando complexidade de senha..."
-
-          $policy = "$env:TEMP\skyro-policy.inf"
-
-          secedit /export /cfg "$policy" /quiet
-
-          if (-not (Test-Path $policy)) {
-              throw "Nao foi possivel exportar a politica de seguranca."
-          }
-
-          $content = Get-Content "$policy" -Raw
-
-          if ($content -match 'PasswordComplexity\s*=') {
-              $content = $content -replace `
-                'PasswordComplexity\s*=\s*\d+', `
-                'PasswordComplexity = 0'
-          }
-          else {
-              $content += "`r`nPasswordComplexity = 0`r`n"
-          }
-
-          if ($content -match 'MinimumPasswordLength\s*=') {
-              $content = $content -replace `
-                'MinimumPasswordLength\s*=\s*\d+', `
-                'MinimumPasswordLength = 5'
-          }
-          else {
-              $content += "`r`nMinimumPasswordLength = 5`r`n"
-          }
-
-          Set-Content `
-            "$policy" `
-            $content `
-            -Encoding Unicode
-
-          secedit /configure `
-            /db "$env:TEMP\skyro.sdb" `
-            /cfg "$policy" `
-            /areas SECURITYPOLICY `
-            /quiet
-
-          Start-Sleep -Seconds 5
-
-          net accounts /minpwlen:5 | Out-Null
-
-          Start-Sleep -Seconds 3
-
-          # ==========================================================
-          # DEFINIR SENHA DO SECRET
-          # ==========================================================
-
-          Write-Host "Definindo senha do Secret RDP_PASSWORD..."
-
-          $finalPassword = ConvertTo-SecureString `
-            $env:RDP_PASSWORD `
-            -AsPlainText `
-            -Force
-
-          Set-LocalUser `
-            -Name $env:RDP_USER `
-            -Password $finalPassword
-
-          Write-Host "Senha definida com sucesso."
-
-          # ==========================================================
-          # GRUPOS
-          # ==========================================================
+          # --------------------------------------------------------
+          # Grupos
+          # --------------------------------------------------------
 
           Add-LocalGroupMember `
             -Group "Administrators" `
@@ -142,9 +206,9 @@ jobs:
             -Member $env:RDP_USER `
             -ErrorAction SilentlyContinue
 
-          # ==========================================================
-          # ATIVAR RDP
-          # ==========================================================
+          # --------------------------------------------------------
+          # Ativar RDP
+          # --------------------------------------------------------
 
           Set-ItemProperty `
             -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
@@ -156,16 +220,16 @@ jobs:
             -Name "UserAuthentication" `
             -Value 0
 
-          # ==========================================================
-          # FIREWALL
-          # ==========================================================
+          # --------------------------------------------------------
+          # Firewall
+          # --------------------------------------------------------
 
           Enable-NetFirewallRule `
             -DisplayGroup "Remote Desktop"
 
-          # ==========================================================
-          # SERVICO
-          # ==========================================================
+          # --------------------------------------------------------
+          # Servico
+          # --------------------------------------------------------
 
           Set-Service `
             -Name "TermService" `
@@ -177,13 +241,13 @@ jobs:
           Start-Sleep -Seconds 3
 
           Write-Host ""
-          Write-Host "================================"
+          Write-Host "============================================"
           Write-Host "RDP CONFIGURADO"
           Write-Host "Usuario: $env:RDP_USER"
-          Write-Host "Senha definida pelo Secret"
-          Write-Host "================================"
-          Write-Host ""
-          
+          Write-Host "Senha: definida pelo Secret"
+          Write-Host "============================================"
+
+
       # ============================================================
       # TAILSCALE
       # ============================================================
@@ -195,7 +259,7 @@ jobs:
 
 
       # ============================================================
-      # OBTER IP
+      # OBTER IP TAILSCALE
       # ============================================================
       - name: Obter IP do Tailscale
         shell: powershell
@@ -228,14 +292,10 @@ jobs:
           Write-Host "          SKYRO RDP ONLINE"
           Write-Host "============================================"
           Write-Host ""
-          Write-Host "Tailscale IP : $ip"
-          Write-Host "RDP IP       : $ip"
-          Write-Host "RDP Porta    : 3389"
+          Write-Host "IP Tailscale : $ip"
+          Write-Host "Porta        : 3389"
           Write-Host "Usuario      : $env:RDP_USER"
-          Write-Host "Senha        : $env:RDP_PASSWORD"
-          Write-Host ""
           Write-Host "============================================"
-          Write-Host ""
 
 
       # ============================================================
@@ -246,7 +306,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Testando servico RDP..."
+          Write-Host "Testando TermService..."
 
           $service = Get-Service `
             -Name "TermService" `
@@ -262,7 +322,6 @@ jobs:
 
           Write-Host "TermService: $((Get-Service TermService).Status)"
 
-          Write-Host ""
           Write-Host "Testando porta 3389..."
 
           $test = Test-NetConnection `
@@ -278,14 +337,13 @@ jobs:
 
 
       # ============================================================
-      # DISCORD WEBHOOK
+      # DISCORD
       # ============================================================
       - name: Enviar acesso para Discord
         shell: powershell
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-
           if ([string]::IsNullOrWhiteSpace($env:DISCORD_WEBHOOK_URL)) {
               Write-Host "DISCORD_WEBHOOK_URL nao configurado."
               exit 0
@@ -321,7 +379,6 @@ jobs:
       - name: Mostrar acesso
         shell: powershell
         run: |
-
           Write-Host ""
           Write-Host "================================================"
           Write-Host "              SKYRO RDP ONLINE"
@@ -340,7 +397,6 @@ jobs:
           Write-Host "$env:RDP_PASSWORD"
           Write-Host ""
           Write-Host "================================================"
-          Write-Host ""
 
 
       # ============================================================
@@ -349,7 +405,6 @@ jobs:
       - name: Manter VM online
         shell: powershell
         run: |
-
           Write-Host "VM online."
 
           while ($true) {
